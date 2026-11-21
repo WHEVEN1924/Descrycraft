@@ -132,6 +132,37 @@ python tools/prepare_drone_model.py <source> --install
 python tools/generate_textures.py
 ```
 
+## Packaging and releases
+
+The default packaging is the plain Gradle build (NeoForge ModDev jar, no shading or bundling):
+
+```bash
+./gradlew build    # → build/libs/Descrycraft-<version>.jar
+```
+
+- The **Build** workflow (`.github/workflows/build.yml`) runs this on every push to `main` and on
+  pull requests, uploading the jar as a build artifact.
+- The **Release** workflow (`.github/workflows/release.yml`) builds and publishes a GitHub Release
+  with the jar attached whenever a `v*` tag is pushed.
+
+Cutting a release: bump `mod_version` in `gradle.properties`, commit, then push a matching tag
+(`git tag v1.0.1 && git push origin v1.0.1`).
+
+## Publishing to Modrinth / CurseForge
+
+The Release workflow also uploads the same jar to Modrinth and CurseForge through
+[mc-publish](https://github.com/Kir-Antipov/mc-publish). One-time setup:
+
+1. Create the project on each platform — the Modrinth dashboard, and the CurseForge author
+   dashboard (CurseForge projects need moderator approval before uploads are accepted).
+2. In repository **Settings → Secrets and variables → Actions**, add:
+   - variables `MODRINTH_PROJECT_ID` (slug or base62 id) and `CURSEFORGE_PROJECT_ID` (numeric id);
+   - secrets `MODRINTH_TOKEN` (PAT with *Create versions* scope) and `CURSEFORGE_TOKEN`
+     (API token from the CurseForge author dashboard).
+3. Listing assets live in `docs/`: `icon-512.png` (project icon), `drone-preview*.png` (gallery).
+
+Platforms without credentials are skipped automatically.
+
 ## Project layout
 
 - `src/main/java/dev/descrycraft/descrycraft/`
@@ -166,6 +197,14 @@ When adding a module, add its bit to `DroneModules.ALL` — otherwise it is stri
   sheet and the two emissive states
 - `docs/drone-uv-layout.png` — texture atlas
 
+## Installation
+
+Requires **Minecraft 1.21.1** with the **NeoForge** loader (21.1.x, built against 21.1.251).
+Drop `Descrycraft-<version>.jar` from [Releases](https://github.com/WHEVEN1924/Descrycraft/releases)
+into your `mods` folder. NeoForge must be installed on both client and server.
+
 ## License
 
-All rights reserved.
+Licensed under the **GNU Affero General Public License v3.0** (`AGPL-3.0-only`) — see [LICENSE](LICENSE).
+In short: you may use, modify and redistribute this mod, but distributed or network-hosted
+modified versions must make their complete source available under the same license.
