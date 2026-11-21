@@ -5,7 +5,7 @@ import com.mojang.logging.LogUtils;
 import dev.descrycraft.descrycraft.entity.ReconDroneEntity;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.PostChain;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import org.slf4j.Logger;
@@ -100,8 +100,8 @@ public final class DroneSignal {
      * expects: it reads the file straight off the resource manager rather than going through any
      * shader registry.
      */
-    private static final ResourceLocation CHAIN =
-            ResourceLocation.fromNamespaceAndPath("descrycraft", "shaders/post/drone_blur.json");
+    private static final Identifier CHAIN =
+            Identifier.fromNamespaceAndPath("descrycraft", "shaders/post/drone_blur.json");
 
     /**
      * Widest blur radius, in pixels, at full signal loss.

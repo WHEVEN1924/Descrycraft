@@ -5,7 +5,7 @@ import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 /**
  * Client -> server: "switch this fitted module on or off at the loadout screen".
@@ -24,7 +24,7 @@ public record DroneLoadoutPayload(boolean offHand, int flag, boolean enabled)
 
     public static final CustomPacketPayload.Type<DroneLoadoutPayload> TYPE =
             new CustomPacketPayload.Type<>(
-                    ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_loadout"));
+                    Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_loadout"));
 
     public static final StreamCodec<ByteBuf, DroneLoadoutPayload> STREAM_CODEC =
             StreamCodec.composite(

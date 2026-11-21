@@ -5,7 +5,7 @@ import dev.descrycraft.descrycraft.item.DroneModules;
 import dev.descrycraft.descrycraft.registry.ModItems;
 import dev.descrycraft.descrycraft.registry.ModMenus;
 import net.minecraft.world.Container;
-import net.minecraft.world.ContainerListener;
+import net.minecraft.world.inventory.ContainerListener;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;

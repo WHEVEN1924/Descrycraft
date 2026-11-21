@@ -6,7 +6,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -42,7 +42,7 @@ public record DroneScanPayload(List<BlockPos> chests, int threatPercent, BlockPo
 
     public static final CustomPacketPayload.Type<DroneScanPayload> TYPE =
             new CustomPacketPayload.Type<>(
-                    ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_scan"));
+                    Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_scan"));
 
     /**
      * ⚠️ 威胁坐标是<b>一个</b> {@code BlockPos} 而不是三个 int，玩家列表才有位置放。

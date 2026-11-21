@@ -5,7 +5,7 @@ import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 /**
  * 服务端 -> 客户端：你被一架无人机看到了。
@@ -21,7 +21,7 @@ public record DroneAlertPayload(String pilotId) implements CustomPacketPayload {
 
     public static final CustomPacketPayload.Type<DroneAlertPayload> TYPE =
             new CustomPacketPayload.Type<>(
-                    ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_alert"));
+                    Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_alert"));
 
     public static final StreamCodec<ByteBuf, DroneAlertPayload> STREAM_CODEC = StreamCodec.composite(
             ByteBufCodecs.STRING_UTF8, DroneAlertPayload::pilotId,

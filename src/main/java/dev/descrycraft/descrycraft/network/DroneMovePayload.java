@@ -5,14 +5,14 @@ import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 /** Client -> server: the pilot's authoritative position, look direction and barrel roll for this tick. */
 public record DroneMovePayload(int droneId, double x, double y, double z, float yRot, float xRot, float roll)
         implements CustomPacketPayload {
 
     public static final CustomPacketPayload.Type<DroneMovePayload> TYPE =
-            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_move"));
+            new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_move"));
 
     /**
      * Written out by hand rather than with {@code StreamCodec.composite}.

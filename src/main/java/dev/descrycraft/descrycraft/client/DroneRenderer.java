@@ -9,7 +9,7 @@ import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.texture.OverlayTexture;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 
 /**
@@ -22,8 +22,8 @@ import net.minecraft.util.Mth;
  */
 public class DroneRenderer extends EntityRenderer<ReconDroneEntity> {
 
-    private static final ResourceLocation TEXTURE =
-            ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, "textures/entity/recon_drone.png");
+    private static final Identifier TEXTURE =
+            Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "textures/entity/recon_drone.png");
 
     /**
      * Half the model's own height, so its centre lands on the entity's centre.
@@ -105,7 +105,7 @@ public class DroneRenderer extends EntityRenderer<ReconDroneEntity> {
     }
 
     @Override
-    public ResourceLocation getTextureLocation(ReconDroneEntity entity) {
+    public Identifier getTextureLocation(ReconDroneEntity entity) {
         return TEXTURE;
     }
 }

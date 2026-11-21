@@ -4,7 +4,7 @@ import dev.descrycraft.descrycraft.menu.ModuleWorkbenchMenu;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Inventory;
 
 /**
@@ -17,8 +17,8 @@ import net.minecraft.world.entity.player.Inventory;
  */
 public class ModuleWorkbenchScreen extends AbstractContainerScreen<ModuleWorkbenchMenu> {
 
-    private static final ResourceLocation BACKGROUND =
-            ResourceLocation.fromNamespaceAndPath("descrycraft", "textures/gui/module_workbench.png");
+    private static final Identifier BACKGROUND =
+            Identifier.fromNamespaceAndPath("descrycraft", "textures/gui/module_workbench.png");
 
     /** 标题色，和面板边框的青色同一路。 */
     private static final int TITLE_COLOUR = 0xFF6FE3F5;

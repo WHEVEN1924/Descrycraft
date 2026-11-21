@@ -5,7 +5,7 @@ import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 /** Client -> server: "link in", "link out", "throw a drone", "recall", "interact", "attack run" or "detonate". */
 public record DroneActionPayload(int action, int droneId) implements CustomPacketPayload {
@@ -24,7 +24,7 @@ public record DroneActionPayload(int action, int droneId) implements CustomPacke
     public static final int ACTION_FOLLOW = 7;
 
     public static final CustomPacketPayload.Type<DroneActionPayload> TYPE =
-            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_action"));
+            new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_action"));
 
     public static final StreamCodec<ByteBuf, DroneActionPayload> STREAM_CODEC =
             StreamCodec.composite(

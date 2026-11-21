@@ -6,7 +6,7 @@ import dev.descrycraft.descrycraft.network.DroneLinkPayload;
 import dev.descrycraft.descrycraft.network.DroneScanPayload;
 import dev.descrycraft.descrycraft.registry.ModEntities;
 import dev.descrycraft.descrycraft.registry.ModMenus;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -14,7 +14,7 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
-import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
+import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
@@ -91,8 +91,8 @@ public final class DescrycraftClient {
      * on a reload, but not ours, so without this a resource pack that replaces {@code drone.obj}
      * would keep showing the old airframe until the game was restarted.
      */
-    private static void registerReloadListeners(RegisterClientReloadListenersEvent event) {
-        event.registerReloadListener(DroneMeshes.INSTANCE);
+    private static void registerReloadListeners(AddClientReloadListenersEvent event) {
+        event.addListener(id("drone_meshes"), DroneMeshes.INSTANCE);
     }
 
     private static void registerKeys(RegisterKeyMappingsEvent event) {
@@ -124,7 +124,7 @@ public final class DescrycraftClient {
                         ClientPayloadHandler::handleAlert);
     }
 
-    public static ResourceLocation id(String path) {
-        return ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, path);
+    public static Identifier id(String path) {
+        return Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, path);
     }
 }

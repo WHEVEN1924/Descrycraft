@@ -2,7 +2,7 @@ package dev.descrycraft.descrycraft.registry;
 
 import dev.descrycraft.descrycraft.Descrycraft;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundEvent;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
@@ -39,7 +39,7 @@ public final class ModSounds {
     public static final DeferredHolder<SoundEvent, SoundEvent> DRONE_MOTOR = SOUNDS.register(
             "drone_motor",
             () -> SoundEvent.createFixedRangeEvent(
-                    ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_motor"),
+                    Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_motor"),
                     MOTOR_RANGE));
 
     /**
@@ -54,7 +54,7 @@ public final class ModSounds {
     public static final DeferredHolder<SoundEvent, SoundEvent> DRONE_BOOM = SOUNDS.register(
             "drone_boom",
             () -> SoundEvent.createFixedRangeEvent(
-                    ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_boom"),
+                    Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "drone_boom"),
                     BOOM_RANGE));
 
     /**
@@ -66,7 +66,7 @@ public final class ModSounds {
     public static final DeferredHolder<SoundEvent, SoundEvent> TINNITUS = SOUNDS.register(
             "tinnitus",
             () -> SoundEvent.createVariableRangeEvent(
-                    ResourceLocation.fromNamespaceAndPath(Descrycraft.MOD_ID, "tinnitus")));
+                    Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "tinnitus")));
 
     private ModSounds() {
     }

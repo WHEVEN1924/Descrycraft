@@ -5,7 +5,7 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.PostChain;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 
 /**
@@ -42,8 +42,8 @@ public final class DroneNoise {
     private static final Logger LOGGER = LogUtils.getLogger();
 
     /** 和 {@link DroneSignal} 一样，是资源路径而不是 shader 注册名：PostChain 直接读文件。 */
-    private static final ResourceLocation EFFECT =
-            ResourceLocation.fromNamespaceAndPath("descrycraft", "shaders/post/screen_noise.json");
+    private static final Identifier EFFECT =
+            Identifier.fromNamespaceAndPath("descrycraft", "shaders/post/screen_noise.json");
 
     /** 链子第一次用到时构建。连接无人机时就先建好，免得颗粒第一次出现时现编译着色器。 */
     private static PostChain effect;

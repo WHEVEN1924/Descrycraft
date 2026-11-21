@@ -5,10 +5,10 @@ import com.mojang.logging.LogUtils;
 import dev.descrycraft.descrycraft.Descrycraft;
 import java.util.HashSet;
 import java.util.Set;
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import net.minecraft.client.renderer.RenderType;
-import net.minecraft.client.resources.model.Material;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.client.resources.model.sprite.Material;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
 import net.minecraft.world.inventory.InventoryMenu;
@@ -74,9 +74,9 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
     private static final String NAMESPACE = Descrycraft.MOD_ID;
 
     /** Paths are relative to {@code assets/descrycraft/}, with no {@code textures/} prefix. */
-    private static final ResourceLocation BODY_TEXTURE = id("entity/recon_drone");
-    private static final ResourceLocation GLOW_TEXTURE = id("entity/recon_drone_glow");
-    private static final ResourceLocation RED_GLOW_TEXTURE = id("entity/recon_drone_glow_red");
+    private static final Identifier BODY_TEXTURE = id("entity/recon_drone");
+    private static final Identifier GLOW_TEXTURE = id("entity/recon_drone_glow");
+    private static final Identifier RED_GLOW_TEXTURE = id("entity/recon_drone_glow_red");
 
     /**
      * The OBJ groups {@link DroneRig} animates. A missing group is not fatal - the transform is
@@ -142,8 +142,8 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
         ensureLoaded();
     }
 
-    private static ResourceLocation id(String path) {
-        return ResourceLocation.fromNamespaceAndPath(NAMESPACE, path);
+    private static Identifier id(String path) {
+        return Identifier.fromNamespaceAndPath(NAMESPACE, path);
     }
 
     /**
@@ -227,7 +227,7 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
      * {@code context.getMaterial} untouched, so that key has to be present with the hash for the
      * fallback mesh to bake. The hard-surface MTL instead names a real texture
      * ({@code map_Kd descrycraft:entity/recon_drone}), which {@code resolveDirtyMaterial} parses
-     * into a {@link ResourceLocation} directly and never consults this map for - so the map entry
+     * into a {@link Identifier} directly and never consults this map for - so the map entry
      * is unused there, and harmless.
      *
      * <p>The atlas named on the material is never read either. {@code ObjModel} bakes every quad
@@ -235,7 +235,7 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
      * identity - so the only part of the material that survives into the mesh is its texture
      * location, which becomes the {@link RenderType} we hand in at draw time.
      */
-    private static CompositeRenderable bake(ObjModel model, ResourceLocation texture) {
+    private static CompositeRenderable bake(ObjModel model, Identifier texture) {
         Material material = new Material(InventoryMenu.BLOCK_ATLAS, texture);
         IGeometryBakingContext context = StandaloneGeometryBakingContext.builder()
                 .withMaterials(ImmutableMap.of("#texture0", material), material)

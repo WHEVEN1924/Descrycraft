@@ -5,7 +5,7 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.options.OptionsScreen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.InteractionHand;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -333,7 +333,7 @@ public final class ClientEvents {
         if (!DroneController.isLinked()) {
             return;
         }
-        ResourceLocation name = event.getName();
+        Identifier name = event.getName();
         // The visor draws its own reticle and its own bottom strip, and the vanilla experience bar
         // sits exactly where that strip goes, so both are taken out of the way while piloting.
         if (VanillaGuiLayers.CROSSHAIR.equals(name)
