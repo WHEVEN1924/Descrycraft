@@ -123,6 +123,32 @@ python tools/prepare_drone_model.py <源目录> --install
 python tools/generate_textures.py
 ```
 
+## 打包与发行
+
+默认打包方式为标准 Gradle 构建（NeoForge ModDev 标准 jar，无 shading、无捆绑依赖）：
+
+```bash
+./gradlew build    # → build/libs/Descrycraft-<version>.jar
+```
+
+- **Build** 工作流（`.github/workflows/build.yml`）：每次推送 `main` 与 PR 时执行同样构建，并把 jar 上传为构建产物。
+- **Release** 工作流（`.github/workflows/release.yml`）：推送 `v*` 标签时自动构建并创建附带 jar 的 GitHub Release。
+
+发行流程：修改 `gradle.properties` 的 `mod_version` → 提交 → 推送同名标签（`git tag v1.0.1 && git push origin v1.0.1`）。
+
+## 发布到 Modrinth / CurseForge
+
+Release 工作流还会通过 [mc-publish](https://github.com/Kir-Antipov/mc-publish) 把同一份 jar
+上传到 Modrinth 与 CurseForge。一次性准备：
+
+1. 在两个平台分别创建项目 —— Modrinth 仪表盘；CurseForge 作者后台（CurseForge 项目需先过 moderator 审核才能传文件）。
+2. 仓库 **Settings → Secrets and variables → Actions** 中配置：
+   - 变量 `MODRINTH_PROJECT_ID`（slug 或 base62 id）、`CURSEFORGE_PROJECT_ID`（数字 id）；
+   - 密钥 `MODRINTH_TOKEN`（带 *Create versions* 权限的 PAT）、`CURSEFORGE_TOKEN`（CurseForge 作者后台的 API token）。
+3. 上架素材在 `docs/`：`icon-512.png`（项目图标）、`drone-preview*.png`（画廊图）。
+
+未配置凭证的平台会自动跳过。
+
 ## 项目结构（重要路径）
 
 - `src/main/java/dev/descrycraft/descrycraft/`
@@ -156,6 +182,13 @@ python tools/generate_textures.py
 - `docs/drone-preview.png`、`docs/drone-preview-blue.png`、`docs/drone-preview-red.png` — 棚拍四视图与两种发光状态
 - `docs/drone-uv-layout.png` — 纹理图集
 
+## 安装
+
+需要 **Minecraft 1.21.1** 并安装 **NeoForge** 加载器（21.1.x，构建基准为 21.1.251）。
+从 [Releases](https://github.com/WHEVEN1924/Descrycraft/releases) 下载
+`Descrycraft-<version>.jar` 放入 `mods` 文件夹即可。客户端与服务端都需要安装 NeoForge。
+
 ## 许可证
 
-保留所有权利。
+本项目以 **GNU Affero 通用公共许可证第 3 版**（`AGPL-3.0-only`）授权，全文见 [LICENSE](LICENSE)。
+简而言之：可以自由使用、修改与再分发，但分发或通过网络提供服务的修改版本必须以相同许可证公开完整源码。
