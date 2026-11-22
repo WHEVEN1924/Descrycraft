@@ -96,6 +96,7 @@ public final class DescrycraftClient {
     }
 
     private static void registerKeys(RegisterKeyMappingsEvent event) {
+        event.registerCategory(KeyMappings.CATEGORY);
         event.register(KeyMappings.LINK);
         event.register(KeyMappings.THROW);
         event.register(KeyMappings.RECALL);

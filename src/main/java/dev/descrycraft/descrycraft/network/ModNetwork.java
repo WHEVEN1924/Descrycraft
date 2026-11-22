@@ -4,8 +4,10 @@ import dev.descrycraft.descrycraft.entity.ReconDroneEntity;
 import dev.descrycraft.descrycraft.item.DroneModules;
 import dev.descrycraft.descrycraft.registry.ModItems;
 import dev.descrycraft.descrycraft.server.DroneSettings;
+import net.minecraft.core.Holder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -62,7 +64,7 @@ public final class ModNetwork {
         registrar.playToServer(DroneLoadoutPayload.TYPE, DroneLoadoutPayload.STREAM_CODEC,
                 ModNetwork::handleLoadout);
 
-        if (FMLEnvironment.dist == Dist.DEDICATED_SERVER) {
+        if (FMLEnvironment.getDist() == Dist.DEDICATED_SERVER) {
             registrar.playToClient(DroneLinkPayload.TYPE, DroneLinkPayload.STREAM_CODEC, ModNetwork::ignore);
             registrar.playToClient(DroneScanPayload.TYPE, DroneScanPayload.STREAM_CODEC, ModNetwork::ignore);
             registrar.playToClient(DroneAlertPayload.TYPE, DroneAlertPayload.STREAM_CODEC, ModNetwork::ignore);
@@ -149,17 +151,17 @@ public final class ModNetwork {
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
-        ServerLevel level = player.serverLevel();
+        ServerLevel level = player.level();
 
         switch (payload.action()) {
             case DroneActionPayload.ACTION_ENTER -> {
                 ReconDroneEntity drone = ReconDroneEntity.findLinkable(level, player, payload.droneId());
                 if (drone == null) {
-                    player.displayClientMessage(Component.translatable("message.descrycraft.no_drone"), true);
+                    player.sendOverlayMessage(Component.translatable("message.descrycraft.no_drone"));
                     return;
                 }
                 if (drone.isPiloted() && !drone.isPilotedBy(player)) {
-                    player.displayClientMessage(Component.translatable("message.descrycraft.busy"), true);
+                    player.sendOverlayMessage(Component.translatable("message.descrycraft.busy"));
                     return;
                 }
                 // Drop any other link this player holds first.
@@ -217,7 +219,7 @@ public final class ModNetwork {
         if (drone == null) {
             return;
         }
-        MinecraftServer server = player.getServer();
+        MinecraftServer server = player.level().getServer();
         if (server == null || !DroneSettings.get(server).isDoorInteraction()) {
             return;
         }
@@ -269,20 +271,25 @@ public final class ModNetwork {
             // TrapDoorBlock keeps its BlockSetType private, so fall back to the vanilla wooden pair.
             sound = opening ? SoundEvents.WOODEN_TRAPDOOR_OPEN : SoundEvents.WOODEN_TRAPDOOR_CLOSE;
         }
-        player.playNotifySound(sound, SoundSource.BLOCKS, 1.0F,
-                0.9F + player.getRandom().nextFloat() * 0.1F);
+        // 26.3 删了 playNotifySound。它原本就是给本人发一个位于玩家自身位置的音效包，
+        // 这里直接发同一个包，语义不变：只发给驾驶员本人，而不是 level.playSound 的"除本人外广播"。
+        player.connection.send(new ClientboundSoundPacket(
+                Holder.direct(sound), SoundSource.BLOCKS,
+                player.getX(), player.getY(), player.getZ(),
+                1.0F, 0.9F + player.getRandom().nextFloat() * 0.1F,
+                player.getRandom().nextLong()));
     }
 
     private static void recall(ServerLevel level, ServerPlayer player) {
         ReconDroneEntity drone = ReconDroneEntity.findDeployed(player);
         if (drone == null) {
-            player.displayClientMessage(Component.translatable("message.descrycraft.nothing_to_recall"), true);
+            player.sendOverlayMessage(Component.translatable("message.descrycraft.nothing_to_recall"));
             return;
         }
         // Winding in takes a few seconds now, and the drone is frozen while it happens - so this
         // only starts the process. The completion message is sent when it actually lands.
         if (drone.beginRecall()) {
-            player.displayClientMessage(Component.translatable("message.descrycraft.recalling"), true);
+            player.sendOverlayMessage(Component.translatable("message.descrycraft.recalling"));
         }
     }
 
@@ -297,20 +304,20 @@ public final class ModNetwork {
         }
         // 跟随是一块板子的功能，不是机体自带的。没装就明确说一声，别让玩家以为键坏了。
         if (!drone.hasModule(DroneModules.FOLLOW)) {
-            player.displayClientMessage(
-                    Component.translatable("message.descrycraft.follow_no_module"), true);
+            player.sendOverlayMessage(
+                    Component.translatable("message.descrycraft.follow_no_module"));
             return;
         }
         boolean following = drone.toggleFollow(player);
-        player.displayClientMessage(Component.translatable(
-                following ? "message.descrycraft.follow_on" : "message.descrycraft.follow_off"), true);
+        player.sendOverlayMessage(Component.translatable(
+                following ? "message.descrycraft.follow_on" : "message.descrycraft.follow_off"));
     }
 
     private static void handleMove(DroneMovePayload payload, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
-        ServerLevel level = player.serverLevel();
+        ServerLevel level = player.level();
         ReconDroneEntity drone = piloted(level, player, payload.droneId());
         if (drone == null) {
             return;
@@ -411,11 +418,11 @@ public final class ModNetwork {
 
     private static void throwOne(ServerLevel level, ServerPlayer player) {
         if (ReconDroneEntity.hasDeployed(player)) {
-            player.displayClientMessage(Component.translatable("message.descrycraft.limit"), true);
+            player.sendOverlayMessage(Component.translatable("message.descrycraft.limit"));
             return;
         }
         Inventory inventory = player.getInventory();
-        int selected = inventory.selected;
+        int selected = inventory.getSelectedSlot();
         ItemStack stack = inventory.getItem(selected);
         if (!stack.is(ModItems.RECON_DRONE.get())) {
             stack = ItemStack.EMPTY;
@@ -428,7 +435,7 @@ public final class ModNetwork {
             }
         }
         if (stack.isEmpty()) {
-            player.displayClientMessage(Component.translatable("message.descrycraft.no_item"), true);
+            player.sendOverlayMessage(Component.translatable("message.descrycraft.no_item"));
             return;
         }
         ReconDroneEntity.throwFrom(level, player, stack);

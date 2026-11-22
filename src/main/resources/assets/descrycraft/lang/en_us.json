@@ -37,7 +37,7 @@
   "tooltip.descrycraft.no_modules": "No modules fitted",
   "advancements.descrycraft.recon_drone.title": "To Infinity... and Beyond",
   "advancements.descrycraft.recon_drone.description": "Obtain a recon drone",
-  "key.categories.descrycraft": "Recon Drone",
+  "key.category.descrycraft.drone": "Recon Drone",
   "key.descrycraft.link": "Link / unlink drone",
   "key.descrycraft.throw": "Throw drone",
   "key.descrycraft.recall": "Recall drone",

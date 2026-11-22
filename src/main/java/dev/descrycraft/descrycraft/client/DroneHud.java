@@ -5,7 +5,7 @@ import dev.descrycraft.descrycraft.entity.ReconDroneEntity;
 import dev.descrycraft.descrycraft.item.DroneModules;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
@@ -137,9 +137,9 @@ public final class DroneHud {
         return (r << 16) | (g << 8) | b;
     }
 
-    public static void render(GuiGraphics graphics) {
+    public static void render(GuiGraphicsExtractor graphics) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (!DroneController.isLinked() || minecraft.options.hideGui || minecraft.level == null) {
+        if (!DroneController.isLinked() || minecraft.gui.hud.isHidden() || minecraft.level == null) {
             return;
         }
         Entity entity = minecraft.level.getEntity(DroneController.getLinkedId());
@@ -165,7 +165,7 @@ public final class DroneHud {
 
         // 打开背包、暂停菜单或任何界面时，剩下的仪表层不画 —— 和 DroneMarkerOverlay 与
         // DroneDetectWarning 是同一条规则：这些标记属于"看世界"的那一层，压在容器界面上只会碍事。
-        if (minecraft.screen != null) {
+        if (minecraft.gui.screen() != null) {
             return;
         }
 
@@ -228,7 +228,7 @@ public final class DroneHud {
      * @param remaining 雪花屏还剩多少刻
      * @param ramp      开头渐入的进度，0 到 1
      */
-    private static void drawDetonationStatic(GuiGraphics graphics, int width, int height,
+    private static void drawDetonationStatic(GuiGraphicsExtractor graphics, int width, int height,
                                              int remaining, double ramp) {
         double fade = Math.max(0.0D, Math.min(1.0D, remaining / 8.0D));
 
@@ -299,7 +299,7 @@ public final class DroneHud {
      * per frame would just average out into flat grey at high frame rates; holding it for a few
      * frames is what makes it read as a struggling transmission rather than TV hiss.
      */
-    private static void drawStatic(GuiGraphics graphics, int width, int height, double amount, long millis) {
+    private static void drawStatic(GuiGraphicsExtractor graphics, int width, int height, double amount, long millis) {
         if (amount <= 0.0D) {
             return;
         }
@@ -381,7 +381,7 @@ public final class DroneHud {
      *
      * <p>Drawn under the frame and the readouts, like the snow. The instruments stay crisp.
      */
-    private static void drawChargeStreaks(GuiGraphics graphics, int width, int height, long millis,
+    private static void drawChargeStreaks(GuiGraphicsExtractor graphics, int width, int height, long millis,
                                           double intensity) {
         if (intensity <= 0.02D) {
             return;
@@ -440,7 +440,7 @@ public final class DroneHud {
      * that is really the overlay's job - the blur pulls the whole picture soft, and this pulls the
      * corners in further, the way a lens giving up closes the edges first.
      */
-    private static void drawVignette(GuiGraphics graphics, int width, int height, double amount) {
+    private static void drawVignette(GuiGraphicsExtractor graphics, int width, int height, double amount) {
         int rings = Math.min(48, Math.min(width, height) / 4);
         for (int i = 0; i < rings; i++) {
             double falloff = 1.0D - (double) i / rings;
@@ -463,7 +463,7 @@ public final class DroneHud {
      * <p>两个来源共用：距离超出链路（"信号丢失"）和没装电池（"需要加装电池"）。
      * 它们的画面表现本来就是同一件事 —— 全糊 —— 所以提示也只该有一个出口，区别只在文案。
      */
-    private static void drawBanner(GuiGraphics graphics, Font font, int width, int height,
+    private static void drawBanner(GuiGraphicsExtractor graphics, Font font, int width, int height,
                                    long millis, String key, int colour) {
         if ((millis / 300L) % 2L != 0L) {
             return;
@@ -472,11 +472,11 @@ public final class DroneHud {
         int x = (width - font.width(text)) / 2;
         int y = height / 2 + 30;
         graphics.fill(x - 8, y - 4, x + font.width(text) + 8, y + 11, PANEL);
-        graphics.drawString(font, text, x, y, colour, false);
+        graphics.text(font, text, x, y, colour, false);
     }
     // ------------------------------------------------------------------ frame
 
-    private static void drawFrame(GuiGraphics graphics, int width, int height, long millis) {
+    private static void drawFrame(GuiGraphicsExtractor graphics, int width, int height, long millis) {
         int margin = 6;
         int right = width - margin;
         int bottom = height - margin;
@@ -512,7 +512,7 @@ public final class DroneHud {
      * keeps the vertical stroke sitting on the corner instead of drifting inwards on the right
      * hand side of the screen.
      */
-    private static void bracket(GuiGraphics graphics, int x, int y, int arm, int thick, int dx, int dy) {
+    private static void bracket(GuiGraphicsExtractor graphics, int x, int y, int arm, int thick, int dx, int dy) {
         int hLeft = dx > 0 ? x : x - arm;
         int hRight = dx > 0 ? x + arm : x;
         int hTop = dy > 0 ? y : y - thick;
@@ -535,7 +535,7 @@ public final class DroneHud {
      * <p>It gets a one pixel dark halo purely for legibility: a bare cyan pixel vanishes against
      * snow, clouds and the sky, which is most of what a scout drone ends up looking at.
      */
-    private static void drawReticle(GuiGraphics graphics, int width, int height) {
+    private static void drawReticle(GuiGraphicsExtractor graphics, int width, int height) {
         int cx = width / 2;
         int cy = height / 2;
         graphics.fill(cx - 2, cy - 2, cx + 2, cy + 2, RETICLE_HALO);
@@ -545,7 +545,7 @@ public final class DroneHud {
     // ------------------------------------------------------------------ telemetry
 
     /** The only text on the visor: X, Y, range back to the operator and remaining hit points. */
-    private static void drawTelemetry(GuiGraphics graphics, Font font, ReconDroneEntity drone,
+    private static void drawTelemetry(GuiGraphicsExtractor graphics, Font font, ReconDroneEntity drone,
                                       double range, long millis) {
         String labelX = Component.translatable("hud.descrycraft.axis_x").getString();
         String labelY = Component.translatable("hud.descrycraft.axis_y").getString();
@@ -613,7 +613,7 @@ public final class DroneHud {
      * <p>画在按键条上方居中，而且不受 {@code hud.showTelemetry} 影响：这三秒里回收是唯一在发生
      * 的事，把它藏在一个可关的开关后面没有道理。
      */
-    private static void drawRecallBar(GuiGraphics graphics, Font font, int width, int height,
+    private static void drawRecallBar(GuiGraphicsExtractor graphics, Font font, int width, int height,
                                       float progress) {
         int barWidth = 120;
         int barHeight = 4;
@@ -621,17 +621,17 @@ public final class DroneHud {
         int y = height - 76;
 
         String label = Component.translatable("hud.descrycraft.recalling").getString();
-        graphics.drawString(font, label, (width - font.width(label)) / 2, y - 12, AMBER, false);
+        graphics.text(font, label, (width - font.width(label)) / 2, y - 12, AMBER, false);
 
         graphics.fill(x - 1, y - 1, x + barWidth + 1, y + barHeight + 1, PANEL);
         graphics.fill(x, y, x + barWidth, y + barHeight, CYAN_FAINT);
         graphics.fill(x, y, x + Math.round(barWidth * progress), y + barHeight, AMBER);
     }
 
-    private static void row(GuiGraphics graphics, Font font, String label, String value,
+    private static void row(GuiGraphicsExtractor graphics, Font font, String label, String value,
                             int labelX, int valueRight, int y, int labelColor, int valueColor) {
-        graphics.drawString(font, label, labelX, y, labelColor, false);
-        graphics.drawString(font, value, valueRight - font.width(value), y, valueColor, false);
+        graphics.text(font, label, labelX, y, labelColor, false);
+        graphics.text(font, value, valueRight - font.width(value), y, valueColor, false);
     }
 
     private static String format(double value) {
@@ -663,7 +663,7 @@ public final class DroneHud {
      * <p>The run entry is the one piece of text on the visor that is not dim cyan. It destroys the
      * drone, and it should not be discovered by accident.
      */
-    private static void drawHints(GuiGraphics graphics, Font font, int width, int height,
+    private static void drawHints(GuiGraphicsExtractor graphics, Font font, int width, int height,
                                   String chargeKeys, boolean hasSpeedModule) {
         List<Hint> hints = new ArrayList<>();
         hints.add(new Hint("[" + key(KeyMappings.LINK) + "] " + translate("hud.descrycraft.disconnect"), TEXT_DIM));
@@ -713,7 +713,7 @@ public final class DroneHud {
             int x = (width - total) / 2;
             graphics.fill(x - 6, y - 3, x + total + 6, y + 9, PANEL);
             for (Hint hint : line) {
-                graphics.drawString(font, hint.text(), x, y, hint.colour(), false);
+                graphics.text(font, hint.text(), x, y, hint.colour(), false);
                 x += font.width(hint.text()) + gap;
             }
             y += ROW_HEIGHT;

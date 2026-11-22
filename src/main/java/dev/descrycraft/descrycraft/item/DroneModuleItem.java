@@ -5,8 +5,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.TooltipDisplay;
 
-import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * A plug-in board for the recon drone.
@@ -46,16 +47,16 @@ public class DroneModuleItem extends Item {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, Item.TooltipContext context,
-                                List<Component> tooltip, TooltipFlag flag) {
-        tooltip.add(Component.translatable(this.getDescriptionId() + ".desc")
+    public void appendHoverText(ItemStack stack, Item.TooltipContext context, TooltipDisplay display,
+                                Consumer<Component> builder, TooltipFlag flag) {
+        builder.accept(Component.translatable(this.getDescriptionId() + ".desc")
                 .withStyle(ChatFormatting.GRAY));
         // One line per prerequisite, named from the module items themselves. The old version
         // hardcoded "requires the customization module" for every module that had any
         // prerequisite at all, which is wrong the moment a module gates on another module rather
         // than on the fitting bay - the signal booster's second tier gates on its first.
         for (Component name : DroneModules.names(this.requires)) {
-            tooltip.add(Component.translatable("tooltip.descrycraft.requires", name)
+            builder.accept(Component.translatable("tooltip.descrycraft.requires", name)
                     .withStyle(ChatFormatting.DARK_AQUA));
         }
     }

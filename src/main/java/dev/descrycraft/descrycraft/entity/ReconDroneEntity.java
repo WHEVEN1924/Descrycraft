@@ -10,8 +10,8 @@ import dev.descrycraft.descrycraft.registry.ModEntities;
 import dev.descrycraft.descrycraft.registry.ModSounds;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.particles.ParticleTypes;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -22,15 +22,19 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
+import net.minecraft.util.Prediction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.InterpolationHandler;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.NeutralMob;
+import net.minecraft.world.entity.PositionPath;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -44,6 +48,8 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.EnderChestBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -414,7 +420,7 @@ public class ReconDroneEntity extends Entity {
      * each tick while charging.
      *
      * <p>This is what makes the run smooth, and it exists because of a detail that is easy to
-     * miss: {@code Entity#lerpTo} - the base one this entity inherits - is not an interpolation at
+     * miss: the base {@code InterpolationHandler} this entity inherits is not an interpolation at
      * all, it is a plain {@code setPos}. Only {@code LivingEntity} overrides it with real
      * interpolation. So a base entity that takes the echo straight from the server steps its
      * position once per tick, and at {@link #CHARGE_SPEED} that is a twenty-times-a-second jump of
@@ -525,7 +531,7 @@ public class ReconDroneEntity extends Entity {
      * Whether the drone is currently committed to an attack run.
      *
      * <p>Synced because both sides change behaviour on it: the pilot's client hands control of the
-     * airframe over to the server, and {@link #lerpTo} stops swallowing the position echo, which
+     * airframe over to the server, and {@link #createInterpolationHandler()} stops swallowing the position echo, which
      * is the only way the run is ever seen to move.
      */
     private static final EntityDataAccessor<Boolean> DATA_CHARGING =
@@ -570,7 +576,7 @@ public class ReconDroneEntity extends Entity {
      * 是否正在跟随放飞者。
      *
      * <p>同步出去有两个用处：驾驶员的客户端要在读数里显示这个状态，而
-     * {@code lerpTo} 那一侧的判断也需要知道位置是由谁主导的。
+     * {@code createInterpolationHandler()} 那一侧的判断也需要知道位置是由谁主导的。
      */
     private static final EntityDataAccessor<Boolean> DATA_FOLLOWING =
             SynchedEntityData.defineId(ReconDroneEntity.class, EntityDataSerializers.BOOLEAN);
@@ -821,21 +827,6 @@ public class ReconDroneEntity extends Entity {
 
     // ------------------------------------------------------------------ setup
 
-    /**
-     * Widens the frustum-culling box to cover the rotor discs.
-     *
-     * <p>The hitbox is 0.8 x 0.45 x 0.8, but the mesh spans 1.037 blocks - the tips of the
-     * rotors stick out well past the collision box on both sides. Vanilla culls an entity the
-     * moment its <em>bounding box</em> leaves the frustum, so with the default implementation a
-     * drone hovering at the edge of the screen would pop out of existence while its rotors were
-     * still plainly visible. Rendering is the only thing this affects; collision, the interact
-     * raycast and placement all keep using the real hitbox.
-     */
-    @Override
-    public AABB getBoundingBoxForCulling() {
-        return super.getBoundingBoxForCulling().inflate(0.13);
-    }
-
     @Override
     protected void defineSynchedData(SynchedEntityData.Builder builder) {
         builder.define(DATA_PILOT_ID, -1);
@@ -857,35 +848,30 @@ public class ReconDroneEntity extends Entity {
     }
 
     @Override
-    protected void readAdditionalSaveData(CompoundTag tag) {
-        this.setOwnerUUID(tag.hasUUID("Owner") ? tag.getUUID("Owner") : null);
-        this.thrown = tag.getBoolean("Thrown");
+    protected void readAdditionalSaveData(ValueInput input) {
+        this.setOwnerUUID(input.read("Owner", UUIDUtil.CODEC).orElse(null));
+        this.thrown = input.getBooleanOr("Thrown", false);
         // A damaged airframe stays damaged across a reload.
-        this.setHealth(tag.contains("Health") ? tag.getFloat("Health") : MAX_HEALTH);
+        this.setHealth(input.getFloatOr("Health", MAX_HEALTH));
         // And it keeps whatever was bolted to it.
-        this.setModules(tag.getInt("Modules"));
-        this.setModulesOff(tag.getInt("ModulesOff"));
+        this.setModules(input.getIntOr("Modules", 0));
+        this.setModulesOff(input.getIntOr("ModulesOff", 0));
         // The pack, with however much charge was left in it.
-        if (tag.contains("Battery")) {
-            ItemStack.parse(this.registryAccess(), tag.get("Battery")).ifPresent(this::setBattery);
-        }
+        input.read("Battery", ItemStack.CODEC).ifPresent(this::setBattery);
         // A drone never stays linked across a reload.
         this.setPilotId(-1);
     }
 
     @Override
-    protected void addAdditionalSaveData(CompoundTag tag) {
-        UUID owner = this.getOwnerUUID();
-        if (owner != null) {
-            tag.putUUID("Owner", owner);
-        }
-        tag.putBoolean("Thrown", this.thrown);
-        tag.putFloat("Health", this.getHealth());
-        tag.putInt("Modules", this.getModules());
-        tag.putInt("ModulesOff", this.getModulesOff());
+    protected void addAdditionalSaveData(ValueOutput output) {
+        output.storeNullable("Owner", UUIDUtil.CODEC, this.getOwnerUUID());
+        output.putBoolean("Thrown", this.thrown);
+        output.putFloat("Health", this.getHealth());
+        output.putInt("Modules", this.getModules());
+        output.putInt("ModulesOff", this.getModulesOff());
         ItemStack battery = this.getBattery();
         if (!battery.isEmpty()) {
-            tag.put("Battery", battery.save(this.registryAccess()));
+            output.store("Battery", ItemStack.CODEC, battery);
         }
     }
 
@@ -1240,14 +1226,16 @@ public class ReconDroneEntity extends Entity {
         Player owner = this.getOwnerPlayer();
         if (owner != null) {
             this.pickUp(owner);
-            owner.displayClientMessage(Component.translatable("message.descrycraft.recalled"), true);
+            owner.sendOverlayMessage(Component.translatable("message.descrycraft.recalled"));
             return;
         }
         // Nobody to hand it to. Dropping it where it stands beats deleting it - the drone and its
         // pack are both worth real materials, and the owner can come back for them.
         this.disconnectPilot();
         this.clearMarks();
-        this.spawnAtLocation(this.toStack(), 0.25F);
+        if (this.level() instanceof ServerLevel serverLevel) {
+            this.spawnAtLocation(serverLevel, this.toStack(), 0.25F);
+        }
         this.discard();
     }
 
@@ -1407,7 +1395,7 @@ public class ReconDroneEntity extends Entity {
     }
 
     @Override
-    public boolean canBeCollidedWith() {
+    public boolean canBeCollidedWith(@Nullable Entity other) {
         return false;
     }
 
@@ -1423,21 +1411,26 @@ public class ReconDroneEntity extends Entity {
      * what makes it immune to every status effect for free: potions, area effect clouds and
      * {@code /effect} all resolve their targets as a {@code LivingEntity}, so a buff simply never
      * reaches the drone. Fire immunity comes from the entity type's {@code fireImmune()} flag,
-     * which {@link #isInvulnerableTo(DamageSource)} already honours. Nothing here needs to filter
+     * which {@code isInvulnerableToBase} already honours. Nothing here needs to filter
      * effects out - there is no effect pipeline to filter.
      */
     @Override
-    public boolean hurt(DamageSource source, float amount) {
+    public boolean hurtClient(DamageSource source) {
         if (this.isRemoved() || this.detonating || this.isDetonated()) {
             return false;
         }
-        if (amount <= 0.0F || this.isInvulnerableTo(source)) {
+        // Acknowledge the hit locally so the attacker's swing still lands with a thud, but let
+        // the server be the one that moves the health bar and broadcasts the flash.
+        return !this.isInvulnerableToBase(source);
+    }
+
+    @Override
+    public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
+        if (this.isRemoved() || this.detonating || this.isDetonated()) {
             return false;
         }
-        if (this.level().isClientSide) {
-            // Acknowledge the hit locally so the attacker's swing still lands with a thud, but let
-            // the server be the one that moves the health bar and broadcasts the flash.
-            return true;
+        if (amount <= 0.0F || this.isInvulnerableToBase(source)) {
+            return false;
         }
         if (this.hurtCooldown > 0) {
             return false;
@@ -1453,8 +1446,8 @@ public class ReconDroneEntity extends Entity {
         }
 
         // Entity event 2 is the vanilla "took damage" flash; the client turns it into a red overlay.
-        this.level().broadcastEntityEvent(this, EVENT_HURT);
-        this.level().playSound(null, this.getX(), this.getY(), this.getZ(),
+        level.broadcastEntityEvent(this, EVENT_HURT);
+        level.playSound(null, this.getX(), this.getY(), this.getZ(),
                 SoundEvents.METAL_HIT, this.getSoundSource(),
                 0.8F, 0.85F + this.random.nextFloat() * 0.3F);
         return true;
@@ -1484,10 +1477,10 @@ public class ReconDroneEntity extends Entity {
      */
     private void goDown(Component message, boolean recoverable) {
         this.prepareForRemoval(message);
-        if (recoverable && this.getOwnerUUID() != null) {
+        if (recoverable && this.getOwnerUUID() != null && this.level() instanceof ServerLevel serverLevel) {
             // toStack rather than a bare airframe: "the whole thing goes with it" has to include
             // the pack, or a shot-down drone would quietly eat a hundred units of charge.
-            this.spawnAtLocation(this.toStack(), 0.25F);
+            this.spawnAtLocation(serverLevel, this.toStack(), 0.25F);
         }
         this.discard();
     }
@@ -1513,7 +1506,7 @@ public class ReconDroneEntity extends Entity {
         if (ownerId != null) {
             ServerPlayer owner = serverLevel.getServer().getPlayerList().getPlayer(ownerId);
             if (owner != null) {
-                owner.displayClientMessage(message, true);
+                owner.sendOverlayMessage(message);
             }
         }
     }
@@ -1538,15 +1531,21 @@ public class ReconDroneEntity extends Entity {
      * {@link #CHARGE_ECHO_CHASE} - so the echo is stored and chased instead.
      */
     @Override
-    public void lerpTo(double x, double y, double z, float yRot, float xRot, int steps) {
-        if (this.level().isClientSide && this.getId() == DroneControlState.pilotedDroneId) {
-            if (this.isCharging()) {
-                this.chargeTarget = new Vec3(x, y, z);
-                this.chargeTargetSet = true;
+    protected InterpolationHandler createInterpolationHandler() {
+        return new InterpolationHandler.NoOpInterpolationHandler() {
+            @Override
+            public boolean interpolateTo(@Nullable PositionPath position, float yRot, float xRot, boolean hasRotation) {
+                if (ReconDroneEntity.this.level().isClientSide()
+                        && ReconDroneEntity.this.getId() == DroneControlState.pilotedDroneId) {
+                    if (ReconDroneEntity.this.isCharging() && position != null) {
+                        ReconDroneEntity.this.chargeTarget = position.endPosition();
+                        ReconDroneEntity.this.chargeTargetSet = true;
+                    }
+                    return true;
+                }
+                return false;
             }
-            return;
-        }
-        super.lerpTo(x, y, z, yRot, xRot, steps);
+        };
     }
 
     @Override
@@ -1557,7 +1556,7 @@ public class ReconDroneEntity extends Entity {
     @Override
     public void tick() {
         super.tick();
-        if (this.level().isClientSide) {
+        if (this.level().isClientSide()) {
             this.clientTick();
         } else {
             this.serverTick();
@@ -2019,7 +2018,7 @@ public class ReconDroneEntity extends Entity {
         int reach = (int) Math.ceil(FOLLOW_HEIGHT + FOLLOW_CLEARANCE) + 1;
         for (int i = 1; i <= reach; i++) {
             BlockPos probe = BlockPos.containing(x, baseY + i, z);
-            if (level.getBlockState(probe).isSolidRender(level, probe)) {
+            if (level.getBlockState(probe).isSolidRender()) {
                 return Math.min(wanted, baseY + i - FOLLOW_CLEARANCE);
             }
         }
@@ -2069,7 +2068,7 @@ public class ReconDroneEntity extends Entity {
      * @return true if the run started
      */
     public boolean startCharge(ServerPlayer pilot) {
-        if (this.level().isClientSide || this.isRemoved()) {
+        if (this.level().isClientSide() || this.isRemoved()) {
             return false;
         }
         // 引爆之后的雪花屏阶段机体已经没了，链路却还挂着。不挡住的话，一个改过的客户端
@@ -2249,7 +2248,7 @@ public class ReconDroneEntity extends Entity {
         DamageSource source = level.damageSources().explosion(this, pilot);
         ExplosionDamageCalculator calculator = new ExplosionDamageCalculator() {
             @Override
-            public float getEntityDamageAmount(Explosion explosion, Entity entity) {
+            public float getEntityDamageAmount(Explosion explosion, Entity entity, float exposure) {
                 return CHARGE_DAMAGE;
             }
 
@@ -2282,7 +2281,7 @@ public class ReconDroneEntity extends Entity {
      * 机体上真的装了战斗部、当前不在冲刺也不在雪花屏里。
      */
     public boolean detonateManually(ServerPlayer pilot) {
-        if (this.level().isClientSide || this.isRemoved()) {
+        if (this.level().isClientSide() || this.isRemoved()) {
             return false;
         }
         if (this.isCharging() || this.isDetonated() || this.detonating) {
@@ -2578,7 +2577,7 @@ public class ReconDroneEntity extends Entity {
             if (!level.isLoaded(neighbour)) {
                 continue;
             }
-            if (!level.getBlockState(neighbour).isSolidRender(level, neighbour)) {
+            if (!level.getBlockState(neighbour).isSolidRender()) {
                 exposed++;
             }
         }
@@ -2776,7 +2775,7 @@ public class ReconDroneEntity extends Entity {
         if (this.isOwnedBy(player) || player.getId() == this.getPilotId()) {
             return true;
         }
-        return ALERT_IGNORE_NAMESAKE && this.ourNames.contains(player.getGameProfile().getName());
+        return ALERT_IGNORE_NAMESAKE && this.ourNames.contains(player.getGameProfile().name());
     }
 
     /** 刷新 {@link #ourNames}。每轮生物扫描与威胁扫描开头各调一次。 */
@@ -2784,11 +2783,11 @@ public class ReconDroneEntity extends Entity {
         this.ourNames.clear();
         ServerPlayer owner = this.getOwnerPlayer(level);
         if (owner != null) {
-            this.ourNames.add(owner.getGameProfile().getName());
+            this.ourNames.add(owner.getGameProfile().name());
         }
         ServerPlayer pilot = this.getPilot();
         if (pilot != null) {
-            this.ourNames.add(pilot.getGameProfile().getName());
+            this.ourNames.add(pilot.getGameProfile().name());
         }
     }
 
@@ -2898,12 +2897,12 @@ public class ReconDroneEntity extends Entity {
      * 让客户端能算出和服务器一样的答案。
      */
     @Override
-    public InteractionResult interact(Player player, InteractionHand hand) {
+    public InteractionResult interact(Player player, InteractionHand hand, Vec3 location) {
         // 非机主一律放行；机主不潜行也放行——回收要潜行，这是设计。
         if (!this.isOwnedBy(player) || !player.isShiftKeyDown()) {
             return InteractionResult.PASS;
         }
-        if (this.level().isClientSide) {
+        if (this.level().isClientSide()) {
             return InteractionResult.SUCCESS;
         }
         // 手里拿着电池就是装/拆，否则才是把整架收进背包。两件事都消耗这次交互，
@@ -2921,8 +2920,8 @@ public class ReconDroneEntity extends Entity {
         } else {
             // 手里拿着东西却不是电池 —— 多半是拿错了（石墨电极最像）。
             // 以前这里直接回收整机，玩家会以为"右键把它弄没了"，所以改成只给提示。
-            player.displayClientMessage(
-                    Component.translatable("message.descrycraft.recall_needs_empty_hand"), true);
+            player.sendOverlayMessage(
+                    Component.translatable("message.descrycraft.recall_needs_empty_hand"));
         }
         return InteractionResult.CONSUME;
     }
@@ -2959,18 +2958,18 @@ public class ReconDroneEntity extends Entity {
             this.setBattery(held.copyWithCount(1));
             held.shrink(1);
             this.batteryTimer = 0;
-            player.displayClientMessage(
-                    Component.translatable("message.descrycraft.battery_installed"), true);
+            player.sendOverlayMessage(
+                    Component.translatable("message.descrycraft.battery_installed"));
             return;
         }
 
         this.setBattery(ItemStack.EMPTY);
         this.batteryTimer = 0;
         if (!player.getInventory().add(seated)) {
-            player.drop(seated, false);
+            player.drop(seated, false, Prediction.PREDICTED);
         }
-        player.displayClientMessage(
-                Component.translatable("message.descrycraft.battery_removed"), true);
+        player.sendOverlayMessage(
+                Component.translatable("message.descrycraft.battery_removed"));
     }
 
     private void pickUp(Player player) {
@@ -2980,7 +2979,7 @@ public class ReconDroneEntity extends Entity {
         // was carrying a half-spent pack comes back carrying that same half-spent pack.
         ItemStack stack = this.toStack();
         if (!player.getInventory().add(stack)) {
-            player.drop(stack, false);
+            player.drop(stack, false, Prediction.SERVER_ONLY);
         }
         this.discard();
     }
@@ -3011,7 +3010,7 @@ public class ReconDroneEntity extends Entity {
 
     @Override
     public void remove(RemovalReason reason) {
-        if (!this.level().isClientSide && reason != RemovalReason.UNLOADED_TO_CHUNK) {
+        if (!this.level().isClientSide() && reason != RemovalReason.UNLOADED_TO_CHUNK) {
             this.disconnectPilot();
             this.clearMarks();
         }
@@ -3020,13 +3019,13 @@ public class ReconDroneEntity extends Entity {
 
     /** Spawns a drone that flies out in front of the player, then hovers. */
     public static void throwFrom(Level level, Player player, ItemStack stack) {
-        ReconDroneEntity drone = ModEntities.RECON_DRONE.get().create(level);
+        ReconDroneEntity drone = ModEntities.RECON_DRONE.get().create(level, EntitySpawnReason.SPAWN_ITEM_USE);
         if (drone == null) {
             return;
         }
         Vec3 look = player.getViewVector(1.0F);
         Vec3 spawn = player.getEyePosition().add(look.scale(0.9D)).subtract(0.0D, 0.2D, 0.0D);
-        drone.moveTo(spawn.x, spawn.y, spawn.z, player.getYRot(), player.getXRot());
+        drone.snapTo(spawn.x, spawn.y, spawn.z, player.getYRot(), player.getXRot());
         drone.setOwner(player);
         drone.setModules(DroneModules.of(stack));
         drone.setModulesOff(DroneModules.offOf(stack));
@@ -3062,7 +3061,7 @@ public class ReconDroneEntity extends Entity {
      */
     @Nullable
     public static ReconDroneEntity findDeployed(Player player) {
-        MinecraftServer server = player.getServer();
+        MinecraftServer server = player.level().getServer();
         if (server == null) {
             return null;
         }
@@ -3083,8 +3082,8 @@ public class ReconDroneEntity extends Entity {
 
     /** Used by the server to keep the drone out of the void. */
     public void clampToWorld(ServerLevel level) {
-        double minY = level.getMinBuildHeight() + 0.05D;
-        double maxY = level.getMaxBuildHeight() - 1.0D;
+        double minY = level.getMinY() + 0.05D;
+        double maxY = level.getMaxY();
         if (this.getY() < minY || this.getY() > maxY) {
             this.setPos(this.getX(), Math.min(Math.max(this.getY(), minY), maxY), this.getZ());
         }

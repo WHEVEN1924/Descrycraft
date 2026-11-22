@@ -41,14 +41,14 @@ public final class ModCommands {
             source.sendFailure(Component.literal("只有玩家能执行这条命令"));
             return 0;
         }
-        var current = player.level().dimension().location();
+        var current = player.level().dimension().identifier();
         var recorded = DroneDimensionGuard.lastDimension(player);
         ReconDroneEntity drone = ReconDroneEntity.findDeployed(player);
 
         source.sendSuccess(() -> Component.literal(
                 "当前维度：" + current), false);
         source.sendSuccess(() -> Component.literal(
-                "上次记录维度：" + (recorded == null ? "（还没记录，本会话首次 tick）" : recorded.location())), false);
+                "上次记录维度：" + (recorded == null ? "（还没记录，本会话首次 tick）" : recorded.identifier())), false);
         source.sendSuccess(() -> Component.literal(
                 "换维度检测：" + (recorded == null
                         ? "未初始化"

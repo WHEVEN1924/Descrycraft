@@ -7,15 +7,16 @@ import dev.descrycraft.descrycraft.network.DroneActionPayload;
 import dev.descrycraft.descrycraft.network.DroneMovePayload;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.Input;
+import net.minecraft.client.player.ClientInput;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
-import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
 /**
  * Client side remote control.
@@ -341,8 +342,8 @@ public final class DroneController {
         // 模式变了（定位音 ⇄ 驾驶舱音），让旋翼声立刻重建，别等轮询。
         DroneSounds.refresh();
         // Linking in from behind an open inventory would leave it sitting over the visor forever.
-        if (minecraft.screen != null) {
-            minecraft.setScreen(null);
+        if (minecraft.gui.screen() != null) {
+            minecraft.gui.setScreen(null);
         }
         minecraft.setCameraEntity(drone);
     }
@@ -448,7 +449,7 @@ public final class DroneController {
     }
 
     private static void sendMove(ReconDroneEntity drone) {
-        PacketDistributor.sendToServer(new DroneMovePayload(
+        ClientPacketDistributor.sendToServer(new DroneMovePayload(
                 drone.getId(),
                 drone.getX(),
                 drone.getY(),
@@ -496,7 +497,7 @@ public final class DroneController {
             return;
         }
         lastChargeRequest = now;
-        PacketDistributor.sendToServer(
+        ClientPacketDistributor.sendToServer(
                 new DroneActionPayload(DroneActionPayload.ACTION_CHARGE, getLinkedId()));
     }
 
@@ -691,14 +692,14 @@ public final class DroneController {
      * （原版疾跑），不该和滚筒混在一起。
      */
     private static void updateRoller(Minecraft minecraft, ReconDroneEntity drone, boolean sprint) {
-        boolean down = isLinked() && minecraft.screen == null && KeyMappings.ROLL.isDown();
+        boolean down = isLinked() && minecraft.gui.screen() == null && KeyMappings.ROLL.isDown();
 
         // consumeClick() 抓的是"两刻之间按下过"，isDown() 抓的是"这一刻还按着"。极快的一点
         // 可能整个发生在两刻之间，isDown 采样不到，但点击计数会 +1。所以点按这条路用计数补一刀：
         // 既保证短促点按不丢，又不会和按住那条路重复触发（按住时 down 为真，先走上面那支）。
         boolean tapped = false;
         while (KeyMappings.ROLL.consumeClick()) {
-            tapped = isLinked() && minecraft.screen == null;
+            tapped = isLinked() && minecraft.gui.screen() == null;
         }
 
         long now = System.nanoTime();
@@ -770,26 +771,26 @@ public final class DroneController {
 
     private static void handleKeys(Minecraft minecraft) {
         while (KeyMappings.LINK.consumeClick()) {
-            if (minecraft.screen != null) {
+            if (minecraft.gui.screen() != null) {
                 continue;
             }
             if (isLinked()) {
-                PacketDistributor.sendToServer(
+                ClientPacketDistributor.sendToServer(
                         new DroneActionPayload(DroneActionPayload.ACTION_EXIT, getLinkedId()));
             } else {
-                PacketDistributor.sendToServer(
+                ClientPacketDistributor.sendToServer(
                         new DroneActionPayload(DroneActionPayload.ACTION_ENTER, -1));
             }
         }
         while (KeyMappings.THROW.consumeClick()) {
-            if (minecraft.screen == null) {
-                PacketDistributor.sendToServer(
+            if (minecraft.gui.screen() == null) {
+                ClientPacketDistributor.sendToServer(
                         new DroneActionPayload(DroneActionPayload.ACTION_THROW, -1));
             }
         }
         while (KeyMappings.RECALL.consumeClick()) {
-            if (minecraft.screen == null) {
-                PacketDistributor.sendToServer(
+            if (minecraft.gui.screen() == null) {
+                ClientPacketDistributor.sendToServer(
                         new DroneActionPayload(DroneActionPayload.ACTION_RECALL, -1));
             }
         }
@@ -797,16 +798,16 @@ public final class DroneController {
         // "按住"两种模式必须由同一处判断。这里多消费一次会让那边永远读不到点按。
         while (KeyMappings.DETONATE.consumeClick()) {
             // 手动引爆。是否真的能炸由服务端说了算 - 这里只负责把意图送过去。
-            if (isLinked() && minecraft.screen == null) {
-                PacketDistributor.sendToServer(
+            if (isLinked() && minecraft.gui.screen() == null) {
+                ClientPacketDistributor.sendToServer(
                         new DroneActionPayload(DroneActionPayload.ACTION_DETONATE, getLinkedId()));
             }
         }
         while (KeyMappings.FOLLOW.consumeClick()) {
             // 跟随开关不需要连线，也不需要知道无人机在哪一架 —— 服务端自己找放飞者名下的那架。
             // 这是这个键存在的意义：玩家在别处做别的事时也能让无人机跟上或停下。
-            if (minecraft.screen == null) {
-                PacketDistributor.sendToServer(
+            if (minecraft.gui.screen() == null) {
+                ClientPacketDistributor.sendToServer(
                         new DroneActionPayload(DroneActionPayload.ACTION_FOLLOW, -1));
             }
         }
@@ -1048,7 +1049,7 @@ public final class DroneController {
         if (!isLinked()) {
             return;
         }
-        PacketDistributor.sendToServer(
+        ClientPacketDistributor.sendToServer(
                 new DroneActionPayload(DroneActionPayload.ACTION_INTERACT, getLinkedId()));
     }
 
@@ -1151,7 +1152,7 @@ public final class DroneController {
         reportedOnGround = player.onGround();
         minecraft.getConnection().send(new ServerboundMovePlayerPacket.PosRot(
                 player.getX(), player.getY(), player.getZ(),
-                player.getYRot(), player.getXRot(), player.onGround()));
+                player.getYRot(), player.getXRot(), player.onGround(), player.horizontalCollision));
     }
 
     /**
@@ -1258,8 +1259,8 @@ public final class DroneController {
             }
         }
 
-        double minY = minecraft.level.getMinBuildHeight() + 0.1D;
-        double maxY = minecraft.level.getMaxBuildHeight() - 1.0D;
+        double minY = minecraft.level.getMinY() + 0.1D;
+        double maxY = minecraft.level.getMaxY();
         if (drone.getY() < minY || drone.getY() > maxY) {
             drone.setPos(drone.getX(), Mth.clamp(drone.getY(), minY, maxY), drone.getZ());
             drift = Vec3.ZERO;
@@ -1307,14 +1308,7 @@ public final class DroneController {
         if (event.getEntity() != Minecraft.getInstance().player) {
             return;
         }
-        Input input = event.getInput();
-        input.forwardImpulse = 0.0F;
-        input.leftImpulse = 0.0F;
-        input.jumping = false;
-        input.shiftKeyDown = false;
-        input.up = false;
-        input.down = false;
-        input.left = false;
-        input.right = false;
+        ClientInput input = event.getInput();
+        input.keyPresses = Input.EMPTY;
     }
 }

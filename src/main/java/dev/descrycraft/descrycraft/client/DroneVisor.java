@@ -1,90 +1,55 @@
 package dev.descrycraft.descrycraft.client;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.client.renderer.state.level.PlayerRenderState;
 
 /**
- * 把驾驶员本体的画面状态挡在无人机镜头之外。
+ * 把驾驶员本体的反胃/传送门画面扭曲挡在无人机镜头之外。
  *
- * <p>无人机链路只把<b>相机实体</b>换成无人机（{@code Minecraft#setCameraEntity}），但原版有几处
- * 画面效果是直接读 {@code minecraft.player} 的，而玩家本体对象在操控期间始终还是本机玩家 ——
- * 于是这些效果会照常叠在无人机镜头上。
+ * <p>无人机链路只把<b>相机实体</b>换成无人机（{@code Minecraft#setCameraEntity}），但投影矩阵上的
+ * 扭曲读的是<b>本机玩家</b>的渲染快照，而玩家本体对象在操控期间始终还是本机玩家 —— 于是这份扭曲
+ * 会照常叠在无人机镜头上。
  *
- * <p>目前挡掉的只有<b>反胃</b>（{@code MobEffects.CONFUSION}，下界传送门 / 迷之炖菜那种画面扭曲）。
- * 它的两处读取点都在 {@code GameRenderer} 里，而且都绕不过去：
- * <ul>
- *   <li>{@code getProjectionMatrix} 里的
- *       {@code Mth.lerp(f, player.oSpinningEffectIntensity, player.spinningEffectIntensity)} ——
- *       投影矩阵上的摇晃与横向拉伸；</li>
- *   <li>{@code render} 里的 HUD 叠加 {@code renderConfusionOverlay}，读的是同一个值。</li>
- * </ul>
- * 两处都只看这一个浮点数，把它清零就等于同时关掉两处。本模组不用 Mixin，所以走的是
- * "临时把字段挪走"这条路，而不是去改投影矩阵。
+ * <h2>26.3 的两段式渲染与这里的钩子</h2>
  *
- * <h2>为什么是"帧内挪走"而不是"每刻清零"</h2>
+ * <p>26.3 把渲染改成"先抽取快照、再渲染"：{@code LevelExtractor#extractPlayerState} 把玩家的
+ * {@code portalEffectIntensity}（由 oPortalEffectIntensity/portalEffectIntensity 插值）、
+ * {@code nauseaEffectIntensity}（getEffectBlendFactor(NAUSEA)）、{@code spinningEffectAngle}
+ * （getSpinningEffectAngle）写进 {@link PlayerRenderState}；{@code GameRenderer#renderLevel} 之后
+ * <b>只读这份快照</b>来算投影矩阵的摇晃、横向拉伸与旋转。
  *
- * <p>反胃强度是个<b>累加器</b>：{@code LocalPlayer#handleConfusionTransitionEffect} 每刻把它往目标
- * 推 0.006667（有反胃时）或拉回 0（没有时，每刻 -0.05），所以它同时是玩家<b>自己</b>的画面状态。
- * 如果每刻都清零，玩家解除链路之后，自己的反胃会从 0 重新爬上来，要七秒多才恢复原样 ——
- * 那是把一个 bug 换成另一个。
+ * <p>NeoForge 的 {@code ExtractLevelRenderStateEvent} 正好在"所有原版快照抽取完之后"触发，且快照
+ * 字段都是 public 可写的。所以这里在那个事件里把三个扭曲字段清零，投影矩阵那一段就等于看不到
+ * 驾驶员的反胃/传送门状态。快照每帧 {@code reset()} 后重抽，<b>不需要"挪走再还回来"</b>，也就没有
+ * 旧版（1.21.1 直接 park 玩家 spinningEffectIntensity 字段）那种漏还的风险。
  *
- * <p>所以挪动只覆盖渲染那一小段：{@code RenderFrameEvent.Pre} 里存下真值并清零，
- * {@code RenderFrameEvent.Post} 里原样还回去。整个 tick 逻辑（包括那个累加器）看到的一直是真值，
- * 只有中间那一次 {@code GameRenderer#render} 看到 0。两个事件在 {@code Minecraft#runTick} 里
- * 成对触发（{@code if (!this.noRender)} 内部），{@code Post} 必然在 {@code render()} 返回之后执行，
- * 所以不存在"挪走了没还回来"的路径。
+ * <h2>已知限制（26.3 移植 WIP）</h2>
  *
- * <h2>不改的东西</h2>
+ * <p>HUD 上那层<b>平面</b>的传送门/反胃叠加（{@code Hud#extractPortalOverlay} /
+ * {@code extractConfusionOverlay}）在 26.3 改成<b>直接读</b> {@code player.portalEffectIntensity}
+ * 与 {@code getEffectBlendFactor(NAUSEA)}，不再走这份快照，所以本类挡不住它。要挡它得另找 HUD
+ * 抽取钩子、或在 HUD 渲染那段临时挪玩家字段（反胃那一项还读 mob 效果，不是单纯字段），留待后续。
  *
- * <p>受伤红屏不在这里，因为它本来就是对的：{@code Gui#renderVignette} 取的是
- * {@code minecraft.getCameraEntity()}，操控期间那就是无人机自己，闪的是无人机挨的那一下。
+ * <p>受伤红屏不在这里，因为它本来就是对的：它取的是相机实体，操控期间那就是无人机自己。
  */
 public final class DroneVisor {
-
-    /** 真值只在 {@link #beginFrame()} 与 {@link #endFrame()} 之间被挪走。 */
-    private static boolean parked;
-    private static float parkedIntensity;
-    private static float parkedPreviousIntensity;
 
     private DroneVisor() {
     }
 
     /**
-     * 帧开始：操控期间把玩家本体的反胃强度挪走，让这一帧的镜头只反映无人机。
+     * 在原版快照抽取完之后调用（{@code ExtractLevelRenderStateEvent}）：操控期间把玩家快照里的
+     * 反胃/传送门扭曲清零，让这一帧的无人机镜头不带驾驶员本体的画面扭曲。
      *
-     * <p>没在操控就什么都不做 —— 字段一个都不碰，所以普通游戏完全不受影响。
+     * <p>没在操控就什么都不碰 —— 普通游戏完全不受影响。
      */
-    public static void beginFrame() {
-        if (parked || !DroneController.isLinked()) {
+    public static void suppressPilotNausea(LevelRenderState state) {
+        if (!DroneController.isLinked()) {
             return;
         }
-        LocalPlayer player = Minecraft.getInstance().player;
-        if (player == null) {
-            return;
-        }
-        parkedIntensity = player.spinningEffectIntensity;
-        parkedPreviousIntensity = player.oSpinningEffectIntensity;
-        player.spinningEffectIntensity = 0.0F;
-        player.oSpinningEffectIntensity = 0.0F;
-        parked = true;
-    }
-
-    /**
-     * 帧结束：把挪走的值原样还回去。
-     *
-     * <p>这里<b>不</b>检查是否还在操控：链路有可能正好在这一帧里断掉，但值已经挪走了，
-     * 不还回去就会永久停在 0 —— 那等于把玩家的反胃彻底关掉。
-     */
-    public static void endFrame() {
-        if (!parked) {
-            return;
-        }
-        parked = false;
-        LocalPlayer player = Minecraft.getInstance().player;
-        if (player == null) {
-            return;
-        }
-        player.spinningEffectIntensity = parkedIntensity;
-        player.oSpinningEffectIntensity = parkedPreviousIntensity;
+        PlayerRenderState player = state.playerRenderState;
+        player.portalEffectIntensity = 0.0F;
+        player.nauseaEffectIntensity = 0.0F;
+        player.spinningEffectAngle = 0.0F;
     }
 }

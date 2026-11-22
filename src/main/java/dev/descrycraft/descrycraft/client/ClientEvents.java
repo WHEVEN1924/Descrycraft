@@ -12,6 +12,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.ExtractLevelRenderStateEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
@@ -81,7 +82,7 @@ public final class ClientEvents {
         }
         Button entry = Button.builder(
                         Component.translatable("descrycraft.config.button"),
-                        button -> Minecraft.getInstance().setScreen(new DescrycraftConfigScreen(options)))
+                        button -> Minecraft.getInstance().gui.setScreen(new DescrycraftConfigScreen(options)))
                 .bounds(anchor.getX(), anchor.getY() + anchor.getHeight() + OPTIONS_GRID_GAP,
                         anchor.getWidth(), anchor.getHeight())
                 .build();
@@ -167,8 +168,6 @@ public final class ClientEvents {
     /** Per frame, so the drone's view follows the mouse at frame rate instead of at 20 Hz. */
     @SubscribeEvent
     public static void onRenderFrame(RenderFrameEvent.Pre event) {
-        // 排在最前：这一帧的画面只该反映无人机，驾驶员本体的画面状态要先挡掉。
-        DroneVisor.beginFrame();
         DroneController.syncLook();
         DroneController.tickFov();
         // 排在转向之后：转向每帧都会把无人机的朝向重写一遍，抖动放到它前面会被覆盖掉。
@@ -176,15 +175,15 @@ public final class ClientEvents {
     }
 
     /**
-     * 帧结束，把 {@link DroneVisor} 挪走的玩家状态还回去。
+     * 操控期间把驾驶员本体的反胃/传送门扭曲挡在无人机镜头之外。
      *
-     * <p>必须与上面的 {@code Pre} 成对。两个事件在 {@code Minecraft#runTick} 里紧挨着
-     * {@code GameRenderer#render} 的前后触发，并且同在 {@code if (!this.noRender)} 分支内，
-     * 所以 {@code Post} 一定跑得到 —— 没有"挪走了没还回来"的路径。
+     * <p>26.3 两段式渲染：这个事件在所有原版快照抽取完之后触发，{@link DroneVisor} 在这里把
+     * 玩家快照里的扭曲字段清零，{@code GameRenderer#renderLevel} 之后只读这份快照，投影矩阵
+     * 就不再带驾驶员的反胃/传送门摇晃。快照每帧重抽，不需要成对的"还回去"。
      */
     @SubscribeEvent
-    public static void onRenderFramePost(RenderFrameEvent.Post event) {
-        DroneVisor.endFrame();
+    public static void onExtractLevelRenderState(ExtractLevelRenderStateEvent event) {
+        DroneVisor.suppressPilotNausea(event.getRenderState());
     }
 
     /**
@@ -204,12 +203,13 @@ public final class ClientEvents {
     public static void onComputeFov(ViewportEvent.ComputeFov event) {
         double scale = DroneController.viewFovScale();
         if (scale != 1.0D) {
-            event.setFOV(event.getFOV() * scale);
+            event.setFOV((float) (event.getFOV() * scale));
         }
         // 标记覆盖层要自己算透视投影，需要这一帧真正的视场角。只认主视角那一次：
         // ComputeFov 每帧会因为手部渲染、传送动画等原因被调用多次，取值不同的几档，
-        // 随手抓最后一次会让屏幕上的标记乱跳。
-        if (event.usedConfiguredFov()) {
+        // 随手抓最后一次会让屏幕上的标记乱跳。26.3 去掉了 usedConfiguredFov 标志，
+        // 改用「事件相机就是主相机」作等价守卫——投影用的正是主视角那一档。
+        if (event.getCamera() == event.getRenderer().mainCamera()) {
             DroneMarkerOverlay.setFov(event.getFOV());
         }
     }
@@ -258,10 +258,8 @@ public final class ClientEvents {
      * goes soft while the marks stay crisp, blur any later and the blur eats the glow.
      */
     @SubscribeEvent
-    public static void onRenderLevelStage(RenderLevelStageEvent event) {
-        if (event.getStage() == RenderLevelStageEvent.Stage.AFTER_LEVEL) {
-            DroneSignal.renderLevelStage(event.getPartialTick().getGameTimeDeltaTicks());
-        }
+    public static void onRenderLevelStage(RenderLevelStageEvent.AfterLevel event) {
+        DroneSignal.renderLevelStage(event.getLevelRenderState().worldPartialTicks);
     }
 
     @SubscribeEvent
@@ -336,8 +334,10 @@ public final class ClientEvents {
         Identifier name = event.getName();
         // The visor draws its own reticle and its own bottom strip, and the vanilla experience bar
         // sits exactly where that strip goes, so both are taken out of the way while piloting.
+        // 26.3 把经验条并进了 contextual info bar（不再有独立的 EXPERIENCE_BAR 层），
+        // 所以这里挡的是 CONTEXTUAL_INFO_BAR；经验等级数字仍是单独一层。
         if (VanillaGuiLayers.CROSSHAIR.equals(name)
-                || VanillaGuiLayers.EXPERIENCE_BAR.equals(name)
+                || VanillaGuiLayers.CONTEXTUAL_INFO_BAR.equals(name)
                 || VanillaGuiLayers.EXPERIENCE_LEVEL.equals(name)) {
             event.setCanceled(true);
         }

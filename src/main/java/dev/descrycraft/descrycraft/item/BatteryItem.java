@@ -7,8 +7,9 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.TooltipDisplay;
 
-import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * A battery pack for the recon drone.
@@ -88,11 +89,11 @@ public class BatteryItem extends Item {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, Item.TooltipContext context,
-                                List<Component> tooltip, TooltipFlag flag) {
-        tooltip.add(Component.translatable(this.getDescriptionId() + ".desc")
+    public void appendHoverText(ItemStack stack, Item.TooltipContext context, TooltipDisplay display,
+                                Consumer<Component> builder, TooltipFlag flag) {
+        builder.accept(Component.translatable(this.getDescriptionId() + ".desc")
                 .withStyle(ChatFormatting.GRAY));
-        tooltip.add(Component.translatable("tooltip.descrycraft.battery_charge",
+        builder.accept(Component.translatable("tooltip.descrycraft.battery_charge",
                         this.chargeOf(stack), this.capacity)
                 .withStyle(ChatFormatting.AQUA));
     }

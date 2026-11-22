@@ -3,6 +3,7 @@ package dev.descrycraft.descrycraft.registry;
 import dev.descrycraft.descrycraft.Descrycraft;
 import dev.descrycraft.descrycraft.entity.ReconDroneEntity;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -13,7 +14,7 @@ public final class ModEntities {
             DeferredRegister.create(Registries.ENTITY_TYPE, Descrycraft.MOD_ID);
 
     public static final DeferredHolder<EntityType<?>, EntityType<ReconDroneEntity>> RECON_DRONE =
-            ENTITY_TYPES.register("recon_drone", () -> EntityType.Builder
+            ENTITY_TYPES.register("recon_drone", key -> EntityType.Builder
                     .<ReconDroneEntity>of(ReconDroneEntity::new, MobCategory.MISC)
                     .sized(0.8F, 0.45F)
                     .eyeHeight(0.3F)
@@ -21,7 +22,7 @@ public final class ModEntities {
                     .updateInterval(1)
                     .noSummon()
                     .fireImmune()
-                    .build("recon_drone"));
+                    .build(ResourceKey.create(Registries.ENTITY_TYPE, key)));
 
     private ModEntities() {
     }

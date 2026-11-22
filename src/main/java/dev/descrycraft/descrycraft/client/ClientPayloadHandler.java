@@ -68,8 +68,8 @@ public final class ClientPayloadHandler {
     private static void notifyPlayer(String key) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player != null) {
-            minecraft.player.displayClientMessage(
-                    net.minecraft.network.chat.Component.translatable(key), true);
+            minecraft.player.sendOverlayMessage(
+                    net.minecraft.network.chat.Component.translatable(key));
         }
     }
 

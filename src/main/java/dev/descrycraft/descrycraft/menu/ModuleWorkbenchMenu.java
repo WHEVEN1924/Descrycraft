@@ -5,8 +5,7 @@ import dev.descrycraft.descrycraft.item.DroneModules;
 import dev.descrycraft.descrycraft.registry.ModItems;
 import dev.descrycraft.descrycraft.registry.ModMenus;
 import net.minecraft.world.Container;
-import net.minecraft.world.inventory.ContainerListener;
-import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.inventory.TransientCraftingContainer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -43,22 +42,11 @@ public class ModuleWorkbenchMenu extends AbstractContainerMenu {
     private static final int HOTBAR_Y = 142;
     private static final int BENCH_Y = 36;
 
-    // Typed as the concrete class, not the Container interface: addListener lives on SimpleContainer,
-    // and the listener is the whole reason this menu works.
-    private final SimpleContainer input = new SimpleContainer(2);
+    // 26.3 的 SimpleContainer 不再有 addListener，改用原版工作台同款的 TransientCraftingContainer：
+    // 它在自己的 setItem/removeItem/setChanged 里直接回调 menu.slotsChanged(this)，所以不必再手动挂
+    // 监听器。两个输入格 + 一个派生输出格，语义与原来完全一致。
+    private final TransientCraftingContainer input = new TransientCraftingContainer(this, 2, 1);
     private final ResultContainer result = new ResultContainer();
-
-    /**
-     * Bridges the jig's change notices into {@link #slotsChanged}.
-     *
-     * <p>This is not optional bookkeeping. {@code AbstractContainerMenu#addSlot} only files the slot
-     * away - it never subscribes to the container behind it - so a bare {@link SimpleContainer}
-     * changes with nobody listening and {@code slotsChanged} is never called. Vanilla gets this for
-     * free because {@code TransientCraftingContainer} takes the menu as a listener in its own
-     * constructor; a plain {@code SimpleContainer} has no such constructor, so the wiring has to be
-     * done by hand. Without it the result slot stays empty forever.
-     */
-    private final ContainerListener jigListener = this::slotsChanged;
 
     private final Player player;
 
@@ -66,7 +54,6 @@ public class ModuleWorkbenchMenu extends AbstractContainerMenu {
         super(ModMenus.MODULE_WORKBENCH.get(), containerId);
 
         this.player = playerInventory.player;
-        this.input.addListener(this.jigListener);
 
         this.addSlot(new Slot(this.input, JIG_DRONE, 44, BENCH_Y) {
             @Override
@@ -132,7 +119,7 @@ public class ModuleWorkbenchMenu extends AbstractContainerMenu {
         // Server side only, the way the crafting table does it: the client's copy of the result
         // arrives by packet, and letting both sides derive it invites the local guess to fight the
         // authoritative value during the round trip.
-        if (container == this.input && this.player != null && !this.player.level().isClientSide) {
+        if (container == this.input && this.player != null && !this.player.level().isClientSide()) {
             this.refreshResult();
         }
         super.slotsChanged(container);

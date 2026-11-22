@@ -1,23 +1,32 @@
 package dev.descrycraft.descrycraft.client;
 
-import com.google.common.collect.ImmutableMap;
 import com.mojang.logging.LogUtils;
 import dev.descrycraft.descrycraft.Descrycraft;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
-import net.minecraft.util.Util;
-import net.minecraft.client.renderer.RenderType;
+import java.util.concurrent.CompletableFuture;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.client.renderer.block.dispatch.ModelState;
+import net.minecraft.client.renderer.texture.SpriteLoader;
+import net.minecraft.client.resources.model.ModelBaker;
+import net.minecraft.client.resources.model.ModelDebugName;
+import net.minecraft.client.resources.model.ResolvedModel;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.client.resources.model.geometry.QuadCollection;
 import net.minecraft.client.resources.model.sprite.Material;
+import net.minecraft.client.resources.model.sprite.MaterialBaker;
+import net.minecraft.client.resources.model.sprite.TextureSlots;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
-import net.minecraft.world.inventory.InventoryMenu;
-import net.neoforged.neoforge.client.model.geometry.IGeometryBakingContext;
-import net.neoforged.neoforge.client.model.geometry.StandaloneGeometryBakingContext;
+import net.minecraft.util.Util;
+import net.minecraft.util.context.ContextMap;
+import net.neoforged.neoforge.client.model.obj.ObjGeometry;
 import net.neoforged.neoforge.client.model.obj.ObjLoader;
-import net.neoforged.neoforge.client.model.obj.ObjModel;
-import net.neoforged.neoforge.client.model.renderable.CompositeRenderable;
-import net.neoforged.neoforge.client.model.renderable.ITextureRenderTypeLookup;
+import net.neoforged.neoforge.client.textures.UnitTextureAtlasSprite;
+import org.joml.Vector3fc;
 import org.slf4j.Logger;
 
 /**
@@ -37,33 +46,25 @@ import org.slf4j.Logger;
  *       assign cull directions to a mesh that does not want them.</li>
  *   <li>{@code flip_v} stays off, because the generator already writes {@code vt} with the origin
  *       at the top left, matching Minecraft rather than the OBJ spec.</li>
- *   <li>{@code emissive_ambient} is off. With it on, the baked lightmap comes from the material's
+ *   <li>{@code emissive_ambient} is off. With it on, the baked lightmap comes from the material
  *       {@code Ka}, and our materials declare {@code Ka 0 0 0} - which bakes every quad at light
  *       level zero and renders the whole drone black.</li>
  * </ul>
  *
- * <p>The two meshes are drawn with deliberately different render types, and the difference is the
- * whole reason they are separate files:
- * <ul>
- *   <li>The airframe uses {@link RenderType#entityCutout}, an ordinary lit type. It multiplies in
- *       the lightmap we pass, so the hull brightens and darkens with the world.</li>
- *   <li>The camera window, the motor rings and the nose lamp use {@link RenderType#eyes} -
- *       vanilla's additive emissive type, the same one behind a spider's and an enderman's eyes.
- *       It samples <em>no</em> lightmap at all and blends with {@code ONE, ONE}.</li>
- * </ul>
+ * <p>26.3 起 NeoForge 的 OBJ 加载器不再产出 {@code CompositeRenderable}，而是 {@link ObjGeometry}，
+ * 烘焙结果是 {@link QuadCollection}。这里把每个顶层组单独烘成一份 quad 集合，键为组名，
+ * 好让 {@link DroneRig} 的逐组变换在绘制时仍然能套上去（旋翼、云台窗）。
  *
- * <p>Passing {@code LightTexture.FULL_BRIGHT} to a lit type is <em>not</em> enough to make a part
- * look self-lit, and that mistake is what this pair exists to avoid. {@code FULL_BRIGHT} means
- * "as bright as a fully lit block", which is a ceiling rather than a bypass: the lightmap texel it
- * selects is pure white, so the part renders at exactly its texture colour - which is also what a
- * fully lit block renders at. In daylight the hull next to it is at that same ceiling, so a
- * "glowing" lens is pixel-for-pixel indistinguishable from a brightly lit one. The only way to
- * exceed the lighting ceiling is additive blending, hence {@code eyes}.
+ * <p>烘焙用的 {@link ModelBaker} 是一次性的桩：实体贴图不进方块图集，所以材质一律解析到
+ * {@link UnitTextureAtlasSprite}（UV 恒等），真正的贴图在绘制时由 {@code RenderTypes} 传入 ——
+ * 这与旧版 {@code StandaloneGeometryBakingContext} + {@code UnitTextureAtlasSprite} 的行为一致。
  *
- * <p>{@link CompositeRenderable} passes the lightmap and overlay we hand it straight into
- * {@code putBulkData}, so the airframe's hurt flash still works. The emissive shader has no
- * overlay input, so the glow parts do not take the red flash - they stay lit while the hull
- * flashes, which reads correctly anyway.
+ * <p>The two meshes are drawn with deliberately different render types (see {@link DroneRenderer}):
+ * the airframe uses {@code RenderTypes.entityCutout}, an ordinary lit type that multiplies in the
+ * lightmap; the camera window, motor rings and nose lamp use {@code RenderTypes.eyes}, the vanilla
+ * additive emissive type that samples no lightmap and blends {@code ONE, ONE}. Passing
+ * {@code FULL_BRIGHT} to a lit type is <em>not</em> enough to look self-lit - it is a ceiling, not a
+ * bypass - so the glow parts need the additive type to exceed the lighting ceiling.
  */
 public final class DroneMeshes implements ResourceManagerReloadListener {
 
@@ -73,10 +74,10 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
 
     private static final String NAMESPACE = Descrycraft.MOD_ID;
 
-    /** Paths are relative to {@code assets/descrycraft/}, with no {@code textures/} prefix. */
-    private static final Identifier BODY_TEXTURE = id("entity/recon_drone");
-    private static final Identifier GLOW_TEXTURE = id("entity/recon_drone_glow");
-    private static final Identifier RED_GLOW_TEXTURE = id("entity/recon_drone_glow_red");
+    /** Full texture paths, handed to {@code RenderTypes} at draw time. */
+    static final Identifier BODY_TEXTURE = id("textures/entity/recon_drone.png");
+    static final Identifier GLOW_TEXTURE = id("textures/entity/recon_drone_glow.png");
+    static final Identifier RED_GLOW_TEXTURE = id("textures/entity/recon_drone_glow_red.png");
 
     /**
      * The OBJ groups {@link DroneRig} animates. A missing group is not fatal - the transform is
@@ -86,28 +87,8 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
             "Rotor_FL", "Rotor_FR", "Rotor_RL", "Rotor_RR", "Gimbal_Lens",
     };
 
-    /** Lit type: brightens and darkens with the world. */
-    public static final ITextureRenderTypeLookup BODY_LOOKUP = RenderType::entityCutout;
-
-    /**
-     * Additive emissive type: {@code ONE, ONE} blending and no lightmap, so the camera window, the
-     * motor rings and the nose lamp add their colour on top of whatever is behind them and stay
-     * lit at noon and at midnight alike. Culling is left on, so each pixel takes exactly one
-     * additive contribution - which is also why an emissive face that points into the hull, like
-     * the motor rings, is never drawn at all.
-     */
-    public static final ITextureRenderTypeLookup GLOW_LOOKUP = RenderType::eyes;
-
-    /**
-     * The same additive type against the alarm-red sheet. The lookup ignores the texture baked
-     * into the mesh and substitutes {@link #RED_GLOW_TEXTURE}, so a charge or detonation can
-     * recolour the emissive pass without a second bake or a second copy of the geometry.
-     */
-    public static final ITextureRenderTypeLookup GLOW_RED_LOOKUP =
-            texture -> RenderType.eyes(RED_GLOW_TEXTURE);
-
-    /** A fully baked pair: the lit airframe and the emissive parts. */
-    public record Meshes(CompositeRenderable body, CompositeRenderable glow) {
+    /** A fully baked pair, each keyed by OBJ group name: the lit airframe and the emissive parts. */
+    public record Meshes(Map<String, QuadCollection> body, Map<String, QuadCollection> glow) {
     }
 
     /** Guards the bookkeeping below; the meshes themselves are published through {@link #meshes}. */
@@ -179,18 +160,17 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
      *
      * <p>It is roughly half a second of work - the airframe alone is 1.1 MB of OBJ and 6,675
      * quads - plus the class loading that comes with the OBJ loader. On the render thread that
-     * landed as a one-second freeze on the first frame the drone was visible, which read as "the
-     * inventory takes a second to open" whenever that frame happened to be the one behind a menu.
-     * Baking it here moves the cost to a worker, and the drone simply stays out of frame for the
-     * handful of frames it takes.
+     * landed as a one-second freeze on the first frame the drone was visible. Baking it here moves
+     * the cost to a worker, and the drone simply stays out of frame for the handful of frames it
+     * takes.
      */
     private void load(int startedFor) {
         Meshes baked = null;
         try {
-            ObjModel bodyModel = loadModel("drone.obj");
-            ObjModel glowModel = loadModel("drone_glow.obj");
-            baked = new Meshes(bake(bodyModel, BODY_TEXTURE), bake(glowModel, GLOW_TEXTURE));
-            reportMissingParts(bodyModel, glowModel);
+            ObjGeometry bodyGeometry = loadGeometry("drone.obj");
+            ObjGeometry glowGeometry = loadGeometry("drone_glow.obj");
+            baked = new Meshes(bake(bodyGeometry), bake(glowGeometry));
+            reportMissingParts(bodyGeometry, glowGeometry);
         } catch (Exception error) {
             // One failed load should cost us the drone, not the frame.
             LOGGER.error("Could not load the Recon Drone meshes; the drone will not render", error);
@@ -209,8 +189,8 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
         }
     }
 
-    private static ObjModel loadModel(String file) {
-        return ObjLoader.INSTANCE.loadModel(new ObjModel.ModelSettings(
+    private static ObjGeometry loadGeometry(String file) {
+        return ObjLoader.INSTANCE.loadGeometry(new ObjGeometry.Settings(
                 id("models/entity/" + file),
                 false,   // automatic_culling
                 true,    // shade_quads
@@ -219,35 +199,85 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
                 null));  // mtl_override - resolved from the mtllib line in the OBJ
     }
 
+    /** Bakes each top-level group into its own quad collection, keyed by group name for the rig. */
+    private static Map<String, QuadCollection> bake(ObjGeometry geometry) {
+        ModelBaker baker = standaloneBaker();
+        Map<String, QuadCollection> parts = new HashMap<>();
+        for (ObjGeometry.ModelObject part : geometry.getRootParts()) {
+            QuadCollection.Builder builder = new QuadCollection.Builder();
+            part.addQuads(builder, TextureSlots.EMPTY, baker, IDENTITY_STATE, DEBUG_NAME, ContextMap.EMPTY);
+            parts.put(part.name(), builder.build());
+        }
+        return parts;
+    }
+
+    private static final ModelState IDENTITY_STATE = new ModelState() {};
+    private static final ModelDebugName DEBUG_NAME = () -> "descrycraft:recon_drone";
+
+    private static final ModelBaker.Interner IDENTITY_INTERNER = new ModelBaker.Interner() {
+        @Override
+        public Vector3fc vector(Vector3fc vector) {
+            return vector;
+        }
+
+        @Override
+        public BakedQuad.MaterialInfo materialInfo(BakedQuad.MaterialInfo material) {
+            return material;
+        }
+    };
+
     /**
-     * Bakes the model against a throwaway baking context.
-     *
-     * <p>The material key {@code "#texture0"} is what the procedural generator's MTL declares
-     * ({@code map_Kd #texture0}); the OBJ loader hands anything starting with {@code #} to
-     * {@code context.getMaterial} untouched, so that key has to be present with the hash for the
-     * fallback mesh to bake. The hard-surface MTL instead names a real texture
-     * ({@code map_Kd descrycraft:entity/recon_drone}), which {@code resolveDirtyMaterial} parses
-     * into a {@link Identifier} directly and never consults this map for - so the map entry
-     * is unused there, and harmless.
-     *
-     * <p>The atlas named on the material is never read either. {@code ObjModel} bakes every quad
-     * against {@code UnitTextureAtlasSprite} - a 1x1 sprite whose {@code getU}/{@code getV} are the
-     * identity - so the only part of the material that survives into the mesh is its texture
-     * location, which becomes the {@link RenderType} we hand in at draw time.
+     * A throwaway baker for entity geometry that never touches the block atlas. Every material
+     * resolves to the unit sprite (identity UVs); the real texture is supplied at draw time. The
+     * model hooks the OBJ baker never calls are stubbed out.
      */
-    private static CompositeRenderable bake(ObjModel model, Identifier texture) {
-        Material material = new Material(InventoryMenu.BLOCK_ATLAS, texture);
-        IGeometryBakingContext context = StandaloneGeometryBakingContext.builder()
-                .withMaterials(ImmutableMap.of("#texture0", material), material)
-                .build(texture);
-        return model.bakeRenderable(context);
+    private static ModelBaker standaloneBaker() {
+        SpriteLoader.Preparations atlas = new SpriteLoader.Preparations(
+                1, 1, 0, UnitTextureAtlasSprite.INSTANCE, Map.of(), CompletableFuture.completedFuture(null));
+        MaterialBaker materials = new MaterialBaker(atlas, atlas) {
+            @Override
+            public Material.Baked resolveSlot(TextureSlots slots, String id, ModelDebugName name) {
+                return new Material.Baked(UnitTextureAtlasSprite.INSTANCE, false);
+            }
+
+            @Override
+            public Material.Baked get(Material material, ModelDebugName name) {
+                return new Material.Baked(UnitTextureAtlasSprite.INSTANCE, false);
+            }
+        };
+        return new ModelBaker() {
+            @Override
+            public ResolvedModel getModel(Identifier location) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public BlockStateModelPart missingBlockModelPart() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public MaterialBaker materials() {
+                return materials;
+            }
+
+            @Override
+            public Interner interner() {
+                return IDENTITY_INTERNER;
+            }
+
+            @Override
+            public <T> T compute(SharedOperationKey<T> key) {
+                return key.compute(this);
+            }
+        };
     }
 
     /**
      * Both models are searched, not just the airframe: a mesh may carry part of the animated
      * geometry in its own file, so checking only the body could report a present group as missing.
      */
-    private static void reportMissingParts(ObjModel body, ObjModel glow) {
+    private static void reportMissingParts(ObjGeometry body, ObjGeometry glow) {
         Set<String> names = new HashSet<>(body.getConfigurableComponentNames());
         names.addAll(glow.getConfigurableComponentNames());
         for (String part : ANIMATED) {

@@ -37,7 +37,7 @@
   "tooltip.descrycraft.no_modules": "未安装任何模块",
   "advancements.descrycraft.recon_drone.title": "直到永远...超越无限",
   "advancements.descrycraft.recon_drone.description": "获得一架侦查无人机",
-  "key.categories.descrycraft": "侦查无人机",
+  "key.category.descrycraft.drone": "侦查无人机",
   "key.descrycraft.link": "接入 / 断开无人机",
   "key.descrycraft.throw": "快速投出无人机",
   "key.descrycraft.recall": "回收无人机",

@@ -1,35 +1,39 @@
 package dev.descrycraft.descrycraft.server;
 
-import net.minecraft.core.HolderLookup;
-import net.minecraft.nbt.CompoundTag;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import dev.descrycraft.descrycraft.Descrycraft;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.saveddata.SavedData;
+import net.minecraft.world.level.saveddata.SavedDataType;
 
 /**
  * World scoped drone rules, kept in the overworld's data storage so they survive a restart.
  */
 public class DroneSettings extends SavedData {
 
-    private static final String FILE_ID = "descrycraft_settings";
-    private static final String DOOR_INTERACTION = "DoorInteraction";
+    // Defaults to on: worlds saved before the rule existed should keep the feature enabled.
+    public static final Codec<DroneSettings> CODEC = RecordCodecBuilder.create(i -> i.group(
+            Codec.BOOL.optionalFieldOf("DoorInteraction", true).forGetter(s -> s.doorInteraction))
+            .apply(i, DroneSettings::new));
 
-    private static final SavedData.Factory<DroneSettings> FACTORY =
-            new SavedData.Factory<>(DroneSettings::new, DroneSettings::load);
+    public static final SavedDataType<DroneSettings> TYPE = new SavedDataType<>(
+            Identifier.fromNamespaceAndPath(Descrycraft.MOD_ID, "settings"), DroneSettings::new, CODEC);
 
     /** Whether a pilot may use the drone's own reach to work doors, trapdoors and fence gates. */
-    private boolean doorInteraction = true;
+    private boolean doorInteraction;
 
-    public static DroneSettings get(MinecraftServer server) {
-        ServerLevel overworld = server.overworld();
-        return overworld.getDataStorage().computeIfAbsent(FACTORY, FILE_ID);
+    public DroneSettings() {
+        this(true);
     }
 
-    private static DroneSettings load(CompoundTag tag, HolderLookup.Provider registries) {
-        DroneSettings settings = new DroneSettings();
-        // Defaults to on: worlds saved before the rule existed should keep the feature enabled.
-        settings.doorInteraction = !tag.contains(DOOR_INTERACTION) || tag.getBoolean(DOOR_INTERACTION);
-        return settings;
+    public DroneSettings(boolean doorInteraction) {
+        this.doorInteraction = doorInteraction;
+    }
+
+    public static DroneSettings get(MinecraftServer server) {
+        return server.overworld().getDataStorage().computeIfAbsent(TYPE);
     }
 
     public boolean isDoorInteraction() {
@@ -41,11 +45,5 @@ public class DroneSettings extends SavedData {
             this.doorInteraction = value;
             this.setDirty();
         }
-    }
-
-    @Override
-    public CompoundTag save(CompoundTag tag, HolderLookup.Provider registries) {
-        tag.putBoolean(DOOR_INTERACTION, this.doorInteraction);
-        return tag;
     }
 }

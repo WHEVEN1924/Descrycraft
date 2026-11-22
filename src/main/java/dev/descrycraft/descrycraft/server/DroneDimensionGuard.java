@@ -71,7 +71,7 @@ public final class DroneDimensionGuard {
         // 机体还停在旧维度——这正是要收它的那一架。若它已经在玩家脚下（比如同一维度的
         // 传送不该走到这里），findDeployed 也找得到，一并收回，行为是幂等的。
         drone.recallTo(player);
-        player.displayClientMessage(Component.translatable("message.descrycraft.recalled_dimension"), true);
+        player.sendOverlayMessage(Component.translatable("message.descrycraft.recalled_dimension"));
     }
 
     /**
@@ -95,6 +95,6 @@ public final class DroneDimensionGuard {
 
     /** 诊断用：把某个实体所在维度的名字取出来，日志里好读。 */
     public static String dimensionName(Entity entity) {
-        return entity.level().dimension().location().toString();
+        return entity.level().dimension().identifier().toString();
     }
 }

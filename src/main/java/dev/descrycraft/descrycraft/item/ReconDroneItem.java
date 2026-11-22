@@ -10,18 +10,20 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.Prediction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.List;
+import java.util.function.Consumer;
 
 public class ReconDroneItem extends Item {
 
@@ -62,7 +64,7 @@ public class ReconDroneItem extends Item {
         // 潜行 + 右键是配置手势，不是部署。放在最前面，否则对着方块按下去会先把机体放出来。
         if (player.isShiftKeyDown()) {
             sneakAction(level, player, context.getHand());
-            return InteractionResult.sidedSuccess(level.isClientSide);
+            return InteractionResult.SUCCESS;
         }
 
         BlockPos target = context.getClickedPos().relative(context.getClickedFace());
@@ -70,18 +72,18 @@ public class ReconDroneItem extends Item {
             return InteractionResult.FAIL;
         }
 
-        if (!level.isClientSide) {
+        if (!level.isClientSide()) {
             if (ReconDroneEntity.hasDeployed(player)) {
-                player.displayClientMessage(
-                        net.minecraft.network.chat.Component.translatable("message.descrycraft.limit"), true);
+                player.sendOverlayMessage(
+                        net.minecraft.network.chat.Component.translatable("message.descrycraft.limit"));
                 return InteractionResult.FAIL;
             }
-            ReconDroneEntity drone = ModEntities.RECON_DRONE.get().create(level);
+            ReconDroneEntity drone = ModEntities.RECON_DRONE.get().create(level, EntitySpawnReason.SPAWN_ITEM_USE);
             if (drone == null) {
                 return InteractionResult.FAIL;
             }
             Vec3 spawn = Vec3.atCenterOf(target);
-            drone.moveTo(spawn.x, spawn.y, spawn.z, player.getYRot(), 0.0F);
+            drone.snapTo(spawn.x, spawn.y, spawn.z, player.getYRot(), 0.0F);
             drone.setOwner(player);
             // Whatever was fitted at the bench flies with it.
             drone.setModules(DroneModules.of(context.getItemInHand()));
@@ -94,7 +96,7 @@ public class ReconDroneItem extends Item {
                 context.getItemInHand().shrink(1);
             }
         }
-        return InteractionResult.sidedSuccess(level.isClientSide);
+        return InteractionResult.SUCCESS;
     }
 
     /**
@@ -105,25 +107,25 @@ public class ReconDroneItem extends Item {
      * 而"没电池的机体画面全糊"那条又要求玩家在起飞前就把电带上，两者缺一不可。
      */
     @Override
-    public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
+    public InteractionResult use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
 
         if (player.isShiftKeyDown()) {
             sneakAction(level, player, hand);
-            return InteractionResultHolder.sidedSuccess(stack, level.isClientSide);
+            return InteractionResult.SUCCESS;
         }
 
-        if (!level.isClientSide) {
+        if (!level.isClientSide()) {
             if (ReconDroneEntity.hasDeployed(player)) {
-                player.displayClientMessage(
-                        net.minecraft.network.chat.Component.translatable("message.descrycraft.limit"), true);
-                return InteractionResultHolder.fail(stack);
+                player.sendOverlayMessage(
+                        net.minecraft.network.chat.Component.translatable("message.descrycraft.limit"));
+                return InteractionResult.FAIL;
             }
             ReconDroneEntity.throwFrom(level, player, stack);
             level.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.SNOWBALL_THROW,
                     SoundSource.PLAYERS, 0.6F, 1.4F);
         }
-        return InteractionResultHolder.sidedSuccess(stack, level.isClientSide);
+        return InteractionResult.SUCCESS;
     }
 
     /**
@@ -136,19 +138,19 @@ public class ReconDroneItem extends Item {
      * <p>拆电池不走这里了：拆的位置在**已经放出去的那架**身上（潜行 + 手持电池右键机体），
      * 这里只负责把电带上。
      *
-     * <p>界面只在客户端开，服务端这一侧什么都不做。{@code level.isClientSide} 在专用服务器上
+     * <p>界面只在客户端开，服务端这一侧什么都不做。{@code level.isClientSide()} 在专用服务器上
      * 恒为 false，所以那句对客户端类的引用在服务端永远不会被解析 —— 方法体里的符号引用是
      * 懒解析的，不会在类加载时把 {@code DroneLoadoutScreen} 拖进服务端。
      */
     private static void sneakAction(Level level, Player player, InteractionHand hand) {
         ItemStack battery = batteryInOtherHand(player, hand);
         if (!battery.isEmpty()) {
-            if (!level.isClientSide) {
+            if (!level.isClientSide()) {
                 fitBattery(player, player.getItemInHand(hand), battery);
             }
             return;
         }
-        if (level.isClientSide) {
+        if (level.isClientSide()) {
             DroneLoadoutScreen.open(player, hand);
         }
     }
@@ -174,13 +176,13 @@ public class ReconDroneItem extends Item {
         if (!seated.isEmpty()) {
             setBattery(drone, ItemStack.EMPTY);
             if (!player.getInventory().add(seated)) {
-                player.drop(seated, false);
+                player.drop(seated, false, Prediction.PREDICTED);
             }
         }
         setBattery(drone, battery.copyWithCount(1));
         battery.shrink(1);
-        player.displayClientMessage(
-                Component.translatable("message.descrycraft.battery_installed"), true);
+        player.sendOverlayMessage(
+                Component.translatable("message.descrycraft.battery_installed"));
     }
 
     /**
@@ -190,22 +192,22 @@ public class ReconDroneItem extends Item {
      * 只要它是个 {@link DroneModuleItem}，这里就自动认得。
      */
     @Override
-    public void appendHoverText(ItemStack stack, Item.TooltipContext context,
-                                List<Component> tooltip, TooltipFlag flag) {
-        tooltip.add(Component.translatable("item.descrycraft.recon_drone.desc")
+    public void appendHoverText(ItemStack stack, Item.TooltipContext context, TooltipDisplay display,
+                                Consumer<Component> builder, TooltipFlag flag) {
+        builder.accept(Component.translatable("item.descrycraft.recon_drone.desc")
                 .withStyle(ChatFormatting.GRAY));
 
         int mask = DroneModules.of(stack);
         int active = DroneModules.activeOf(stack);
         ItemStack battery = batteryOf(stack);
         if (mask == 0 && battery.isEmpty()) {
-            tooltip.add(Component.translatable("tooltip.descrycraft.no_modules")
+            builder.accept(Component.translatable("tooltip.descrycraft.no_modules")
                     .withStyle(ChatFormatting.DARK_GRAY));
             return;
         }
 
         if (mask != 0) {
-            tooltip.add(Component.translatable("tooltip.descrycraft.installed")
+            builder.accept(Component.translatable("tooltip.descrycraft.installed")
                     .withStyle(ChatFormatting.DARK_AQUA));
             for (int bit : DroneModules.FLAGS) {
                 if (!DroneModules.has(mask, bit)) {
@@ -218,7 +220,7 @@ public class ReconDroneItem extends Item {
                 // 装着的模块全都列出来，关掉的那些用灰色 —— 玩家在物品栏里就能看出哪些件
                 // 只是没通电，而不是根本没装。名字仍然取自模块物品本身。
                 boolean on = DroneModules.has(active, bit);
-                tooltip.add(Component.literal("  ")
+                builder.accept(Component.literal("  ")
                         .append(module.getHoverName())
                         .withStyle(on ? ChatFormatting.AQUA : ChatFormatting.DARK_GRAY));
             }
@@ -228,9 +230,9 @@ public class ReconDroneItem extends Item {
         // it can be swapped in the field, and its charge is the thing the player actually wants to
         // read here.
         if (battery.getItem() instanceof BatteryItem pack) {
-            tooltip.add(Component.translatable("tooltip.descrycraft.battery_fitted")
+            builder.accept(Component.translatable("tooltip.descrycraft.battery_fitted")
                     .withStyle(ChatFormatting.DARK_AQUA));
-            tooltip.add(Component.literal("  ")
+            builder.accept(Component.literal("  ")
                     .append(battery.getHoverName())
                     .append(Component.literal("  " + pack.chargeOf(battery) + "%"))
                     .withStyle(ChatFormatting.AQUA));

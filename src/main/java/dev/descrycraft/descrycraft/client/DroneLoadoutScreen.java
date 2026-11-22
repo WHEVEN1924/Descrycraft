@@ -1,16 +1,7 @@
 package dev.descrycraft.descrycraft.client;
 
-import com.mojang.blaze3d.platform.Lighting;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.ByteBufferBuilder;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexBuffer;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import com.mojang.logging.LogUtils;
-import com.mojang.math.Axis;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import dev.descrycraft.descrycraft.entity.ReconDroneEntity;
 import dev.descrycraft.descrycraft.item.DroneModules;
 import dev.descrycraft.descrycraft.item.ReconDroneItem;
@@ -18,26 +9,33 @@ import dev.descrycraft.descrycraft.network.DroneLoadoutPayload;
 import dev.descrycraft.descrycraft.registry.ModEntities;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.navigation.ScreenRectangle;
+import net.minecraft.client.gui.render.TextureSetup;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+import net.minecraft.client.renderer.entity.EntityRenderer;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
+import net.minecraft.client.renderer.state.gui.GuiElementRenderState;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.neoforged.neoforge.network.PacketDistributor;
-import org.joml.Matrix4f;
-import org.slf4j.Logger;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
+import org.jetbrains.annotations.Nullable;
+import org.joml.Matrix3x2f;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * 改装界面：机体悬在世界里，装着的板子缩成右上角一排，每一块用一条柔软的曲线牵回机体。
@@ -56,21 +54,12 @@ import java.util.Optional;
  * <p>开关只在客户端"预演"一次，随后把意图发给服务端，由服务端用同一套规则再算一遍 ——
  * 见 {@code ModNetwork#handleLoadout}。
  *
- * <p>性能上照着雪花屏（{@link DroneNoise}）那套思路改的：那里的结论是"每帧上万次 GUI 填充"
- * 才是卡的原因，搬到 GPU 上一次画完就好了。这个界面是同一个病 —— 每一块板、每一道边、每一颗
- * 开关、每一条曲线原来都是独立的 {@code graphics.fill}，而 1.21.1 的 {@code GuiGraphics.fill}
- * 在非 managed 状态下**每一次调用都要 endBatch 一次**（还要开关深度测试），一帧一百多次。
- * 现在：
- * <ul>
- *   <li>所有方块（标题条、连线、板子、开关、暗罩、状态灯）分两批写进 {@code RenderType.gui()}
- *       的同一个顶点缓冲，一帧只提交几次；</li>
- *   <li>机体那 7500 多个四边形也不再每帧重新变换、重新写一遍顶点：朝向或窗口尺寸没变时，
- *       直接重放一份早就烘好的 {@link VertexBuffer}。玩家不拖的时候，画机体几乎是零 CPU。</li>
- * </ul>
+ * <p>性能上照着雪花屏（{@link DroneNoise}）那套思路：把"每帧上百次独立填充"换成一次提交。
+ * 26.3 的 GUI 改成提取式渲染，所有方块（标题条、连线、板子、开关、暗罩、状态灯）攒进一个
+ * {@code QuadBatch}（一份 {@code GuiElementRenderState}），一帧提交两次；机体则交给原版的
+ * 画中画实体渲染（{@code graphics.entity}），它自己缓存纹理，不拖的时候几乎零 CPU。
  */
 public class DroneLoadoutScreen extends Screen {
-
-    private static final Logger LOGGER = LogUtils.getLogger();
 
     /** 机体渲染框；接口环和曲线的终点都以这个框的中心为圆心。 */
     private static final int BOX = 150;
@@ -190,16 +179,6 @@ public class DroneLoadoutScreen extends Screen {
 
     // ---- 缓存：每帧都会用到、但只有状态变了才需要重算的东西
 
-    /** 机体烘焙后的一层几何：一个 {@code RenderType} 配一份顶点缓冲。 */
-    private record Baked(RenderType type, VertexBuffer buffer) {
-    }
-
-    private final List<Baked> baked = new ArrayList<>();
-    /** 朝向、窗口尺寸或预览机体变了，烘好的那份就过期。 */
-    private boolean bakeDirty = true;
-    /** 烘过一次失败就永远走现画的回退路径，别每帧再试。 */
-    private boolean bakeFailed;
-
     private List<Node> cachedNodes = List.of();
     private int cachedMask = -1;
     /** 环的转角。拖动时它每帧都在变，所以也要进缓存键，不然配件不会跟着转。 */
@@ -229,7 +208,7 @@ public class DroneLoadoutScreen extends Screen {
      */
     public static void open(Player player, InteractionHand hand) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.screen != null || DroneController.isLinked()) {
+        if (minecraft.gui.screen() != null || DroneController.isLinked()) {
             return;
         }
         ItemStack stack = player.getItemInHand(hand);
@@ -237,27 +216,19 @@ public class DroneLoadoutScreen extends Screen {
             return;
         }
         if (!DroneModules.has(DroneModules.of(stack), DroneModules.CUSTOMIZATION)) {
-            player.displayClientMessage(
-                    Component.translatable("message.descrycraft.no_loadout"), true);
+            player.sendOverlayMessage(
+                    Component.translatable("message.descrycraft.no_loadout"));
             return;
         }
-        minecraft.setScreen(new DroneLoadoutScreen(hand));
+        minecraft.gui.setScreen(new DroneLoadoutScreen(hand));
     }
 
     @Override
     protected void init() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level != null) {
-            this.preview = ModEntities.RECON_DRONE.get().create(minecraft.level);
+            this.preview = ModEntities.RECON_DRONE.get().create(minecraft.level, EntitySpawnReason.COMMAND);
         }
-        // 窗口尺寸变了，机体在屏幕上的落点也就变了 —— 烘好的顶点里带着这个位移。
-        this.bakeDirty = true;
-    }
-
-    @Override
-    public void removed() {
-        clearBaked();
-        super.removed();
     }
 
     @Override
@@ -355,13 +326,13 @@ public class DroneLoadoutScreen extends Screen {
     // ------------------------------------------------------------------ render
 
     @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         // 什么都不铺：世界照旧透出来，这正是这个界面"简洁"的来源。
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        super.render(graphics, mouseX, mouseY, partialTick);
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
         stepRotation(frameDelta());
 
         Minecraft minecraft = Minecraft.getInstance();
@@ -378,43 +349,45 @@ public class DroneLoadoutScreen extends Screen {
         int active = DroneModules.activeOf(stack);
         List<Node> nodes = nodes(stack);
 
-        // 第一大批：标题条、连线、接口环、九块板、九个开关。原来是八十多次 fill，
-        // 每次 fill 都会 endBatch 一次；现在全写进同一个 gui() 缓冲，只提交一次。
-        Matrix4f matrix = graphics.pose().last().pose();
-        VertexConsumer buffer = graphics.bufferSource().getBuffer(RenderType.gui());
-        drawTitle(buffer, matrix);
+        // 第一大批：标题条、连线、接口环、九块板、九个开关。原来每次 fill 都要 endBatch 一次，
+        // 现在全攒进一个 QuadBatch，作为一个 GuiElementRenderState 提交一次。
+        QuadBatch batch = new QuadBatch(graphics);
+        drawTitle(batch);
         // 线先画，机体最后画；线停在接口环上，不会钻进框里。
-        drawLinks(buffer, matrix, nodes, active, mouseX, mouseY);
+        drawLinks(batch, nodes, active, mouseX, mouseY);
         for (Node node : nodes) {
             boolean on = DroneModules.has(active, node.flag());
             boolean hovered = node.hitsSwitch(mouseX, mouseY) || node.hitsPlate(mouseX, mouseY);
-            drawPlate(buffer, matrix, node, on, hovered);
-            drawSwitch(buffer, matrix, node, on, hovered);
+            drawPlate(batch, node, on, hovered);
+            drawSwitch(batch, node, on, hovered);
         }
-        graphics.flush();
+        graphics.submitGuiElementRenderState(batch);
+        graphics.nextStratum();
 
         // 图标走物品渲染，自己会提交；暗罩和状态灯得压在图标上面，所以只能等这一步之后再补一批。
         for (Node node : nodes) {
             drawIcon(graphics, node);
         }
-        VertexConsumer overlay = graphics.bufferSource().getBuffer(RenderType.gui());
-        Matrix4f overlayMatrix = graphics.pose().last().pose();
+        graphics.nextStratum();
+
+        QuadBatch overlay = new QuadBatch(graphics);
         for (Node node : nodes) {
             boolean hovered = node.hitsSwitch(mouseX, mouseY) || node.hitsPlate(mouseX, mouseY);
-            drawOverlay(overlay, overlayMatrix, node, DroneModules.has(active, node.flag()), hovered);
+            drawOverlay(overlay, node, DroneModules.has(active, node.flag()), hovered);
         }
-        graphics.flush();
+        graphics.submitGuiElementRenderState(overlay);
+        graphics.nextStratum();
 
-        // 文字放最后：drawString 自己也会提交，摆在前面只会把上面两批切碎。
+        // 文字放最后：text 自己也会提交，摆在前面只会把上面两批切碎。
         drawTitleText(graphics);
         drawNotice(graphics, stack);
+        graphics.nextStratum();
 
         renderDrone(graphics);
 
         for (Node node : nodes) {
             if (node.hitsSwitch(mouseX, mouseY) || node.hitsPlate(mouseX, mouseY)) {
-                graphics.renderTooltip(this.font, tooltip(node.flag(), active),
-                        Optional.empty(), mouseX, mouseY);
+                graphics.setComponentTooltipForNextFrame(this.font, tooltip(node.flag(), active), mouseX, mouseY);
                 break;
             }
         }
@@ -426,26 +399,26 @@ public class DroneLoadoutScreen extends Screen {
      * <p>这里只放名字：拖动提示、操作说明这类字在实机上是纯噪音，看过一次就不会再看，
      * 反而把界面撑得"啰嗦"。要提示就交给 Tooltip。
      */
-    private void drawTitle(VertexConsumer buffer, Matrix4f matrix) {
+    private void drawTitle(QuadBatch batch) {
         String title = this.title.getString();
         int barWidth = Math.max(120, this.font.width(title) + 26);
         int left = MARGIN;
         int top = MARGIN;
-        rect(buffer, matrix, left, top, left + barWidth, top + 22, TITLE_BG);
-        rect(buffer, matrix, left, top + 21, left + barWidth, top + 22, TITLE_EDGE);
+        rect(batch, left, top, left + barWidth, top + 22, TITLE_BG);
+        rect(batch, left, top + 21, left + barWidth, top + 22, TITLE_EDGE);
         // 左边那道竖线是这一族界面的记号，别去掉。
-        rect(buffer, matrix, left, top, left + 2, top + 22, CYAN);
+        rect(batch, left, top, left + 2, top + 22, CYAN);
     }
 
-    private void drawTitleText(GuiGraphics graphics) {
-        graphics.drawString(this.font, this.title.getString(), MARGIN + 10, MARGIN + 7, TEXT, false);
+    private void drawTitleText(GuiGraphicsExtractor graphics) {
+        graphics.text(this.font, this.title.getString(), MARGIN + 10, MARGIN + 7, TEXT, false);
     }
 
     /** 没电池时的警告。 */
-    private void drawNotice(GuiGraphics graphics, ItemStack stack) {
+    private void drawNotice(GuiGraphicsExtractor graphics, ItemStack stack) {
         if (ReconDroneItem.batteryOf(stack).isEmpty()) {
             // 没电池时所有开关都是摆设 —— 不说清楚，玩家会以为开关坏了。
-            graphics.drawString(this.font,
+            graphics.text(this.font,
                     Component.translatable("screen.descrycraft.loadout.no_battery").getString(),
                     MARGIN + 2, MARGIN + 28, 0xFFFFB020, true);
         }
@@ -461,9 +434,9 @@ public class DroneLoadoutScreen extends Screen {
      * <p>现在全部顶点塞进 {@code RenderType.gui()} 的同一个 {@link VertexConsumer}，最后只
      * {@code flush()} 一次：一帧一次提交，顶点数几百，开销可以忽略。
      */
-    private void drawLinks(VertexConsumer buffer, Matrix4f matrix, List<Node> nodes, int active,
+    private void drawLinks(QuadBatch batch, List<Node> nodes, int active,
                            int mouseX, int mouseY) {
-        addRing(buffer, matrix, boxX() + BOX / 2.0F, boxY() + BOX / 2.0F, 0x2E86E9FF);
+        addRing(batch, boxX() + BOX / 2.0F, boxY() + BOX / 2.0F, 0x2E86E9FF);
 
         for (Node node : nodes) {
             boolean on = DroneModules.has(active, node.flag());
@@ -477,9 +450,9 @@ public class DroneLoadoutScreen extends Screen {
 
             float[] points = curve(node);
             // 先铺一层比芯更宽的暗底：线要横穿草地和天空，不垫底的话亮背景那一段会消失。
-            stroke(buffer, matrix, points, 2.6F, 0x30000000, 0x30000000);
-            stroke(buffer, matrix, points, 1.1F, start, end);
-            addDot(buffer, matrix, node.anchorX(), node.anchorY(),
+            stroke(batch, points, 2.6F, 0x30000000, 0x30000000);
+            stroke(batch, points, 1.1F, start, end);
+            addDot(batch, node.anchorX(), node.anchorY(),
                     on ? 0xFFBFF6FF : 0x88AFC4CE, on ? 2.3F : 1.7F);
         }
     }
@@ -532,7 +505,7 @@ public class DroneLoadoutScreen extends Screen {
      *
      * <p>顶点直接写进批处理缓冲，不经过 {@code fill}，所以整条曲线没有额外的提交。
      */
-    private static void stroke(VertexConsumer buffer, Matrix4f matrix, float[] points,
+    private static void stroke(QuadBatch batch, float[] points,
                                float width, int startColor, int endColor) {
         for (int i = 0; i < CURVE_STEPS - 1; i++) {
             float t0 = i / (float) (CURVE_STEPS - 1);
@@ -540,7 +513,7 @@ public class DroneLoadoutScreen extends Screen {
             // 越靠近机体越细，像被接口"收"进去。
             float w0 = width * (1.0F - 0.30F * t0);
             float w1 = width * (1.0F - 0.30F * t1);
-            segment(buffer, matrix,
+            segment(batch,
                     points[i * 2], points[i * 2 + 1],
                     points[(i + 1) * 2], points[(i + 1) * 2 + 1],
                     w0, w1, lerpColor(startColor, endColor, t0),
@@ -555,7 +528,7 @@ public class DroneLoadoutScreen extends Screen {
      * {@code RenderType.gui()} 没有关掉背面剔除（{@code CompositeStateBuilder} 默认 {@code CULL}），
      * 顺序反过来整批四边形就全被剔掉 —— 之前连线"整个消失"就是这么来的。
      */
-    private static void segment(VertexConsumer buffer, Matrix4f matrix,
+    private static void segment(QuadBatch batch,
                                 float x0, float y0, float x1, float y1,
                                 float w0, float w1, int c0, int c1) {
         float dx = x1 - x0;
@@ -569,20 +542,20 @@ public class DroneLoadoutScreen extends Screen {
         // 起点的两侧 -> 终点的两侧，按"左上、左下、右下、右上"的绕向来写：
         // {@code RenderType.gui()} 的 CompositeState 默认 {@code CULL}，绕反了整批四边形
         // 都会被背面剔除吃掉，表现就是线一条都看不见。这里不能随手换顺序。
-        buffer.addVertex(matrix, x0 + nx * w0, y0 + ny * w0, 0.0F).setColor(c0);
-        buffer.addVertex(matrix, x1 + nx * w1, y1 + ny * w1, 0.0F).setColor(c1);
-        buffer.addVertex(matrix, x1 - nx * w1, y1 - ny * w1, 0.0F).setColor(c1);
-        buffer.addVertex(matrix, x0 - nx * w0, y0 - ny * w0, 0.0F).setColor(c0);
+        batch.vertex(x0 + nx * w0, y0 + ny * w0, c0);
+        batch.vertex(x1 + nx * w1, y1 + ny * w1, c1);
+        batch.vertex(x1 - nx * w1, y1 - ny * w1, c1);
+        batch.vertex(x0 - nx * w0, y0 - ny * w0, c0);
     }
 
     /** 机体周围那圈极淡的接口环：线要有个东西可接，光停在半空会像没画完。 */
-    private static void addRing(VertexConsumer buffer, Matrix4f matrix,
+    private static void addRing(QuadBatch batch,
                                 float centreX, float centreY, int color) {
         int segments = 72;
         for (int i = 0; i < segments; i++) {
             float a0 = (float) (i * Math.PI * 2.0 / segments);
             float a1 = (float) ((i + 1) * Math.PI * 2.0 / segments);
-            segment(buffer, matrix,
+            segment(batch,
                     centreX + (float) Math.cos(a0) * RING_RX,
                     centreY + (float) Math.sin(a0) * RING_RY,
                     centreX + (float) Math.cos(a1) * RING_RX,
@@ -592,13 +565,13 @@ public class DroneLoadoutScreen extends Screen {
     }
 
     /** 落点上的小菱形接点。 */
-    private static void addDot(VertexConsumer buffer, Matrix4f matrix,
+    private static void addDot(QuadBatch batch,
                                float x, float y, int color, float radius) {
         // 上 → 左 → 下 → 右，和 {@code GuiGraphics#fill} 的绕向一致（见 {@link #segment}）。
-        buffer.addVertex(matrix, x, y - radius, 0.0F).setColor(color);
-        buffer.addVertex(matrix, x - radius, y, 0.0F).setColor(color);
-        buffer.addVertex(matrix, x, y + radius, 0.0F).setColor(color);
-        buffer.addVertex(matrix, x + radius, y, 0.0F).setColor(color);
+        batch.vertex(x, y - radius, color);
+        batch.vertex(x - radius, y, color);
+        batch.vertex(x, y + radius, color);
+        batch.vertex(x + radius, y, color);
     }
 
     /**
@@ -607,7 +580,7 @@ public class DroneLoadoutScreen extends Screen {
      * <p>顶点绕向必须和 {@code GuiGraphics#fill} 一致（左上 → 左下 → 右下 → 右上）：
      * {@code RenderType.gui()} 没关背面剔除，绕反了整块会被吃掉，原因见 {@link #segment}。
      */
-    private static void rect(VertexConsumer buffer, Matrix4f matrix,
+    private static void rect(QuadBatch batch,
                              int x1, int y1, int x2, int y2, int color) {
         if (x1 > x2) {
             int swap = x1;
@@ -619,10 +592,10 @@ public class DroneLoadoutScreen extends Screen {
             y1 = y2;
             y2 = swap;
         }
-        buffer.addVertex(matrix, x1, y1, 0.0F).setColor(color);
-        buffer.addVertex(matrix, x1, y2, 0.0F).setColor(color);
-        buffer.addVertex(matrix, x2, y2, 0.0F).setColor(color);
-        buffer.addVertex(matrix, x2, y1, 0.0F).setColor(color);
+        batch.vertex(x1, y1, color);
+        batch.vertex(x1, y2, color);
+        batch.vertex(x2, y2, color);
+        batch.vertex(x2, y1, color);
     }
 
     private static int alpha(int argb) {
@@ -641,43 +614,43 @@ public class DroneLoadoutScreen extends Screen {
         return (a << 24) | (r << 16) | (g << 8) | b;
     }
 
-    private void drawPlate(VertexConsumer buffer, Matrix4f matrix, Node node, boolean on,
+    private void drawPlate(QuadBatch batch, Node node, boolean on,
                            boolean hovered) {
         int x = node.plateX();
         int y = node.plateY();
         int edge = hovered ? SLOT_EDGE_HOT : on ? SLOT_EDGE_ON : SLOT_EDGE;
-        rect(buffer, matrix, x, y, x + SLOT, y + SLOT, SLOT_BG);
-        rect(buffer, matrix, x, y, x + SLOT, y + 1, edge);
-        rect(buffer, matrix, x, y + SLOT - 1, x + SLOT, y + SLOT, edge);
-        rect(buffer, matrix, x, y, x + 1, y + SLOT, edge);
-        rect(buffer, matrix, x + SLOT - 1, y, x + SLOT, y + SLOT, edge);
+        rect(batch, x, y, x + SLOT, y + SLOT, SLOT_BG);
+        rect(batch, x, y, x + SLOT, y + 1, edge);
+        rect(batch, x, y + SLOT - 1, x + SLOT, y + SLOT, edge);
+        rect(batch, x, y, x + 1, y + SLOT, edge);
+        rect(batch, x + SLOT - 1, y, x + SLOT, y + SLOT, edge);
     }
 
-    /** 板子上的图标。{@code renderItem} 内部会提交一次，所以它单独一步、不进上面的批。 */
-    private void drawIcon(GuiGraphics graphics, Node node) {
+    /** 板子上的图标。{@code item} 内部会提交一次，所以它单独一步、不进上面的批。 */
+    private void drawIcon(GuiGraphicsExtractor graphics, Node node) {
         ItemStack module = iconOf(node.flag());
         if (module.isEmpty()) {
             return;
         }
-        graphics.renderItem(module, node.plateX() + (SLOT - ICON) / 2,
+        graphics.item(module, node.plateX() + (SLOT - ICON) / 2,
                 node.plateY() + (SLOT - ICON) / 2);
     }
 
     /** 压在图标上面的两层：关掉时的暗罩、内沿那颗状态灯。 */
-    private void drawOverlay(VertexConsumer buffer, Matrix4f matrix, Node node, boolean on,
+    private void drawOverlay(QuadBatch batch, Node node, boolean on,
                              boolean hovered) {
         int x = node.plateX();
         int y = node.plateY();
         if (!on) {
             // 关掉的配件变暗，而不是消失：它还在机上，只是没在跑，这两件事玩家要能分清。
             // 但光标压上去时得让开一点，否则暗到看不清是哪一块 —— "能查看"先于"能分辨状态"。
-            rect(buffer, matrix, x + 1, y + 1, x + SLOT - 1, y + SLOT - 1,
+            rect(batch, x + 1, y + 1, x + SLOT - 1, y + SLOT - 1,
                     hovered ? 0x46000000 : 0xA6000000);
         }
         // 内沿一颗状态灯，和开关同一色。灯朝着机体那一侧，一圈扫过去时视线是连着的。
         int ledX = Math.round(x + SLOT / 2.0F - node.normalX() * (SLOT / 2.0F - 4.0F));
         int ledY = Math.round(y + SLOT / 2.0F - node.normalY() * (SLOT / 2.0F - 4.0F));
-        rect(buffer, matrix, ledX - 1, ledY - 1, ledX + 2, ledY + 2, on ? CYAN : 0x6656636E);
+        rect(batch, ledX - 1, ledY - 1, ledX + 2, ledY + 2, on ? CYAN : 0x6656636E);
     }
 
     private ItemStack iconOf(int flag) {
@@ -685,7 +658,7 @@ public class DroneLoadoutScreen extends Screen {
     }
 
     /** 线上的开关：一条轨道加一颗滑钮。比"一个圆点"好读，因为它有明确的左右两态。 */
-    private void drawSwitch(VertexConsumer buffer, Matrix4f matrix, Node node, boolean on,
+    private void drawSwitch(QuadBatch batch, Node node, boolean on,
                             boolean hovered) {
         int x = node.switchX();
         int y = node.switchY();
@@ -695,33 +668,31 @@ public class DroneLoadoutScreen extends Screen {
         int ty = y - trackH / 2;
         int colour = on ? CYAN : hovered ? 0xFF8FA3B0 : SWITCH_OFF;
 
-        rect(buffer, matrix, tx - 1, ty - 1, tx + trackW + 1, ty + trackH + 1, SWITCH_TRACK);
-        rect(buffer, matrix, tx, ty, tx + trackW, ty + 1, colour);
-        rect(buffer, matrix, tx, ty + trackH - 1, tx + trackW, ty + trackH, colour);
-        rect(buffer, matrix, tx, ty, tx + 1, ty + trackH, colour);
-        rect(buffer, matrix, tx + trackW - 1, ty, tx + trackW, ty + trackH, colour);
+        rect(batch, tx - 1, ty - 1, tx + trackW + 1, ty + trackH + 1, SWITCH_TRACK);
+        rect(batch, tx, ty, tx + trackW, ty + 1, colour);
+        rect(batch, tx, ty + trackH - 1, tx + trackW, ty + trackH, colour);
+        rect(batch, tx, ty, tx + 1, ty + trackH, colour);
+        rect(batch, tx + trackW - 1, ty, tx + trackW, ty + trackH, colour);
 
         int knobX = on ? tx + trackW - 6 : tx + 1;
-        rect(buffer, matrix, knobX, ty + 1, knobX + 5, ty + trackH - 1, colour);
+        rect(batch, knobX, ty + 1, knobX + 5, ty + trackH - 1, colour);
     }
 
     /**
      * 画那具 3D 机体。
      *
-     * <p>变换是手写的，没借 {@code InventoryScreen#renderEntityInInventoryFollowsAngle}：那个
-     * 方法只收 {@code LivingEntity}，而机体是直接继承 {@code Entity} 的。
+     * <p>交给原版的画中画实体渲染（{@code graphics.entity}）：它自己开一块离屏纹理、自己缓存，
+     * 不拖的时候几乎零 CPU，省掉了以前手写顶点烘焙那一整套（{@code VertexBuffer}/{@code MeshData}）。
      *
-     * <p>⚠️ {@code scale(s, s, -s)} 之后**必须补一次 Z 轴 180° 翻转** —— 原版那套变换里就有
-     * 这一下。少了它模型是倒着的：负的 Z 缩放把整个模型翻了过来，而 GUI 的坐标系朝里是负的。
+     * <p>⚠️ 旋转里**必须补一次 Z 轴 180° 翻转** —— 画中画内部是 {@code scale(s, s, -s)}，负的 Z
+     * 缩放把模型翻了过来，少了这一下模型是倒着的。俯仰接在它后面，正负是反的，所以
+     * {@link #VIEW_TILT} 单独拎出来。这套 {@code rotateZ(PI).mul(rotateX(tilt))} 和原版
+     * {@code InventoryScreen#renderEntityInInventoryFollowsAngle} 完全一致。
      *
-     * <p>朝向写在实体上，不在 pose 里再转一次：{@code DroneRenderer} 本来就会按
+     * <p>朝向写在实体上，不在旋转里再转一次：{@code DroneRenderer} 本来就会按
      * {@code getYRot()} / {@code getXRot()} 自己转，两边都转就转了两遍。
-     *
-     * <p>机体七千多个四边形，每帧重新变换、重新写一遍顶点，是这个界面剩下的大头。可玩家不拖的
-     * 时候画面其实一动不动 —— 所以只在朝向或尺寸变了的时候把整具机体烘一次，之后每帧只是把那份
-     * 顶点缓冲再画一遍（和雪花屏同一个思路：把逐像素的活换成一次绘制）。
      */
-    private void renderDrone(GuiGraphics graphics) {
+    private void renderDrone(GuiGraphicsExtractor graphics) {
         if (this.preview == null) {
             return;
         }
@@ -729,209 +700,34 @@ public class DroneLoadoutScreen extends Screen {
         if (size <= 0.0F) {
             return;
         }
-        // The meshes are parsed and baked on a worker thread. Until that lands there is nothing to
-        // bake: keep the bake pending and try again next frame, instead of latching the every-frame
-        // fallback path for the rest of the session the way a failed bake would.
-        if (!this.bakeFailed && !DroneMeshes.isReady()) {
-            this.bakeDirty = true;
+        // 网格在 worker 线程上解析，没落地之前没什么可画的：这一帧先跳过，下一帧再试。
+        if (!DroneMeshes.isReady()) {
             return;
         }
         int x1 = this.boxX();
         int y1 = this.boxY();
         float scale = BOX * 0.72F / size;
-        float centreX = x1 + BOX / 2.0F;
-        float centreY = y1 + BOX / 2.0F;
 
-        // 朝向不进烘焙：机体是绕自己的竖轴转的，把这个旋转挪到绘制时的模型矩阵里，
-        // 拖一下就不用重烘七千个四边形 —— 之前每帧重烘一次，一拖就掉帧。
-        graphics.flush();
-        if (!this.bakeFailed && !bakePreview(scale)) {
-            this.bakeFailed = true;
-            clearBaked();
-        }
-
-        graphics.enableScissor(x1, y1, x1 + BOX, y1 + BOX);
-        if (this.bakeFailed) {
-            // 回退路径是现画的，朝向得写回实体上。
-            this.preview.setYRot(this.yaw);
-            this.preview.setXRot(0.0F);
-            this.preview.yRotO = this.yaw;
-            this.preview.xRotO = 0.0F;
-            drawPreviewDirect(graphics, centreX, centreY, scale);
-        } else {
-            drawBaked(centreX, centreY);
-        }
-        graphics.disableScissor();
-    }
-
-    private PoseStack posePreview(GuiGraphics graphics, float centreX, float centreY, float scale) {
-        PoseStack pose = graphics.pose();
-        pose.pushPose();
-        pose.translate(centreX, centreY, 50.0);
-        pose.scale(scale, scale, -scale);
-        // 抵消 -Z 缩放：没有这一下模型是倒着的。
-        pose.mulPose(Axis.ZP.rotationDegrees(180.0F));
-        pose.mulPose(Axis.XP.rotationDegrees(VIEW_TILT + this.pitch));
-        return pose;
-    }
-
-    /**
-     * 烘焙用的姿态：以机体自己为中心，不含位置、不含俯仰。
-     *
-     * <p>位置和朝向都留到绘制时再乘，这样同一份顶点缓冲能被任意拖动角度复用。
-     */
-    private PoseStack poseBake(float scale) {
-        PoseStack pose = new PoseStack();
-        pose.pushPose();
-        pose.scale(scale, scale, -scale);
-        // 抵消 -Z 缩放：没有这一下模型是倒着的。
-        pose.mulPose(Axis.ZP.rotationDegrees(180.0F));
-        return pose;
-    }
-
-    /**
-     * 把整具机体（机身 + 自发光层）烘成顶点缓冲。
-     *
-     * <p>没有自己重写那套变换：{@code DroneRenderer} 里还有螺旋桨、云台、侧倾这些按实体状态算的
-     * 东西，抄一遍迟早会和它走偏。这里只是把 {@code EntityRenderDispatcher#render} 的目标缓冲
-     * 换成一个"什么都收"的 {@link MultiBufferSource}，让它照常往里写，写完再把每个
-     * {@code RenderType} 的那一段上传成 {@link VertexBuffer}。
-     *
-     * @return 烘焙成功，或者本来就不需要重烘时返回 true
-     */
-    private boolean bakePreview(float scale) {
-        if (!this.bakeDirty && !this.baked.isEmpty()) {
-            return true;
-        }
-        this.bakeDirty = false;
-        clearBaked();
-
-        Map<RenderType, BufferBuilder> builders = new LinkedHashMap<>();
-        Map<RenderType, ByteBufferBuilder> memory = new HashMap<>();
-        MultiBufferSource sink = type -> {
-            ByteBufferBuilder bytes = memory.computeIfAbsent(type, key -> new ByteBufferBuilder(1536));
-            return builders.computeIfAbsent(type,
-                    key -> new BufferBuilder(bytes, key.mode(), key.format()));
-        };
-
-        // 零位朝向烘进去，拖动时再把这个差角乘在模型矩阵上。
-        this.preview.setYRot(YAW_HOME);
+        // 朝向写回实体：画中画只负责摆正相机，机体自己的偏航由 DroneRenderer 读实体角度。
+        this.preview.setYRot(this.yaw);
         this.preview.setXRot(0.0F);
-        this.preview.yRotO = YAW_HOME;
+        this.preview.yRotO = this.yaw;
         this.preview.xRotO = 0.0F;
 
-        PoseStack pose = poseBake(scale);
         EntityRenderDispatcher dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
-        try {
-            Lighting.setupForEntityInInventory();
-            dispatcher.setRenderShadow(false);
-            try {
-                dispatcher.render(this.preview, 0.0, 0.0, 0.0, 0.0F, 1.0F, pose, sink, 15728880);
-            } finally {
-                dispatcher.setRenderShadow(true);
-                Lighting.setupFor3DItems();
-            }
-            for (Map.Entry<RenderType, BufferBuilder> entry : builders.entrySet()) {
-                // 只收实体格式的那几层；万一混进别的（名牌之类），按没画处理。
-                if (!DefaultVertexFormat.NEW_ENTITY.equals(entry.getKey().format())) {
-                    continue;
-                }
-                MeshData mesh = entry.getValue().build();
-                if (mesh == null) {
-                    // 取过这个类型但一个四边形都没写进来（比如被关掉的名牌层）。
-                    continue;
-                }
-                // upload 里的 setupBufferState() 是往"当前绑定的 VAO"上挂属性指针的，
-                // 所以必须先 bind 再 upload —— 少了这一步，属性指针会挂到别人的 VAO 上，
-                // 自己的 VAO 反而一个属性都没开，画的时候驱动直接读越界（AMD 驱动会当场崩）。
-                VertexBuffer buffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
-                try {
-                    buffer.bind();
-                    buffer.upload(mesh);
-                } finally {
-                    VertexBuffer.unbind();
-                }
-                this.baked.add(new Baked(entry.getKey(), buffer));
-            }
-        } catch (RuntimeException error) {
-            LOGGER.warn("Could not cache the drone preview geometry; drawing it directly instead",
-                    error);
-            clearBaked();
-            return false;
-        } finally {
-            pose.popPose();
-            // 顶点已经进显存，这几段临时 native 缓冲可以还回去了。
-            for (ByteBufferBuilder bytes : memory.values()) {
-                bytes.close();
-            }
-        }
-        return !this.baked.isEmpty();
-    }
+        EntityRenderer<? super ReconDroneEntity, ?> renderer = dispatcher.getRenderer(this.preview);
+        EntityRenderState state = renderer.createRenderState(this.preview, 1.0F);
+        state.shadowPieces.clear();
+        state.outlineColor = 0;
 
-    /**
-     * 重放烘好的几何。
-     *
-     * <p>和 {@code RenderType#draw(MeshData)} 做的事情一样，区别只是顶点早就在显存里：
-     * 装好渲染状态 → 画 → 还原状态。矩阵从 {@code RenderSystem} 现取，也就是 GUI 的那套
-     * 正交投影 + {@code -11000} 平移，和烘焙时写进去的坐标系同一个。
-     */
-    private void drawBaked(float centreX, float centreY) {
-        // 位置 + 俯仰 + 这一下拖出来的差角：全在模型矩阵里，顶点缓冲一份就够。
-        PoseStack pose = new PoseStack();
-        pose.translate(centreX, centreY, 50.0);
-        pose.mulPose(Axis.XP.rotationDegrees(VIEW_TILT + this.pitch));
-        pose.mulPose(Axis.YP.rotationDegrees(Mth.wrapDegrees(YAW_HOME - this.yaw)));
-
-        Lighting.setupForEntityInInventory();
-        Matrix4f modelView = new Matrix4f(RenderSystem.getModelViewMatrix()).mul(pose.last().pose());
-        Matrix4f projection = new Matrix4f(RenderSystem.getProjectionMatrix());
-        try {
-            for (Baked layer : this.baked) {
-                RenderType type = layer.type();
-                type.setupRenderState();
-                try {
-                    // 深度测试必须留着：机体是有前后遮挡的，关掉它背面就会透过来，看起来像块玻璃。
-                    // 后面画的文字和提示框不受影响 —— GuiGraphics 自己提交时会临时关掉深度。
-                    layer.buffer().bind();
-                    layer.buffer().drawWithShader(modelView, projection, RenderSystem.getShader());
-                } finally {
-                    VertexBuffer.unbind();
-                    type.clearRenderState();
-                }
-            }
-        } catch (RuntimeException error) {
-            // 这份缓冲画不出来就死心，退回每帧现画 —— 至少界面不会缺一块。
-            LOGGER.warn("Could not replay the cached drone preview; drawing it directly instead",
-                    error);
-            this.bakeFailed = true;
-            clearBaked();
-        } finally {
-            Lighting.setupFor3DItems();
-        }
-    }
-
-    /** 回退路径：烘焙失败时每帧现画一遍，行为和改性能之前一模一样。 */
-    private void drawPreviewDirect(GuiGraphics graphics, float centreX, float centreY, float scale) {
-        PoseStack pose = posePreview(graphics, centreX, centreY, scale);
-        EntityRenderDispatcher dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
-        try {
-            Lighting.setupForEntityInInventory();
-            dispatcher.setRenderShadow(false);
-            RenderSystem.runAsFancy(() -> dispatcher.render(this.preview, 0.0, 0.0, 0.0, 0.0F, 1.0F,
-                    pose, graphics.bufferSource(), 15728880));
-            graphics.flush();
-            dispatcher.setRenderShadow(true);
-            Lighting.setupFor3DItems();
-        } finally {
-            pose.popPose();
-        }
-    }
-
-    private void clearBaked() {
-        for (Baked layer : this.baked) {
-            layer.buffer().close();
-        }
-        this.baked.clear();
+        // Z 轴 180° 抵消画中画内部的 -Z 缩放；俯仰接在后面（符号见 VIEW_TILT）。
+        Quaternionf rotation = new Quaternionf().rotateZ((float) Math.PI);
+        Quaternionf tilt = new Quaternionf().rotateX((VIEW_TILT + this.pitch) * ((float) Math.PI / 180.0F));
+        rotation.mul(tilt);
+        // 平移取零：让机体原点落在框中心，和以前 drawPreviewDirect 的回退路径一致（原版那套
+        // bbHeight/2 的偏移这里不要，否则机体会被顶到框上半部）。框由画中画自己裁，无需 scissor。
+        graphics.entity(state, scale, new Vector3f(0.0F, 0.0F, 0.0F), rotation, tilt,
+                x1, y1, x1 + BOX, y1 + BOX);
     }
 
     // ------------------------------------------------------------------ interaction
@@ -1054,17 +850,20 @@ public class DroneLoadoutScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
         if (button != 0) {
-            return super.mouseClicked(mouseX, mouseY, button);
+            return super.mouseClicked(event, doubleClick);
         }
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null) {
-            return super.mouseClicked(mouseX, mouseY, button);
+            return super.mouseClicked(event, doubleClick);
         }
         ItemStack stack = minecraft.player.getItemInHand(this.hand);
         if (!holdsConfigurableDrone(stack)) {
-            return super.mouseClicked(mouseX, mouseY, button);
+            return super.mouseClicked(event, doubleClick);
         }
 
         for (Node node : nodes(stack)) {
@@ -1090,11 +889,14 @@ public class DroneLoadoutScreen extends Screen {
             this.pitchVelocity = 0.0F;
             return true;
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(event, doubleClick);
     }
 
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
         if (this.dragging && button == 0) {
             // 减号：屏幕坐标是"鼠标往右，画面跟着往右"，而机体的 yaw 是反着长的。
             // 用加号会变成"往右拖、模型往左转"，实机上手是反的。
@@ -1107,17 +909,18 @@ public class DroneLoadoutScreen extends Screen {
             this.lastDragY = mouseY;
             return true;
         }
-        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+        return super.mouseDragged(event, dragX, dragY);
     }
 
     @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+    public boolean mouseReleased(MouseButtonEvent event) {
+        int button = event.button();
         if (this.dragging && button == 0) {
             // 只松手、不收速度：角速度留在 stepRotation 里，机体带着它继续滑一段。
             this.dragging = false;
             return true;
         }
-        return super.mouseReleased(mouseX, mouseY, button);
+        return super.mouseReleased(event);
     }
 
     /**
@@ -1141,7 +944,82 @@ public class DroneLoadoutScreen extends Screen {
         }
         active = DroneModules.pruneUnsatisfied(active);
         DroneModules.setOff(stack, installed & ~active);
-        PacketDistributor.sendToServer(
+        ClientPacketDistributor.sendToServer(
                 new DroneLoadoutPayload(this.hand == InteractionHand.OFF_HAND, flag, wanted));
+    }
+
+    /**
+     * 一帧里所有纯色四边形（标题条、连线、接口环、板子、开关、暗罩、状态灯）攒成的一份
+     * {@link GuiElementRenderState}，经 {@code submitGuiElementRenderState} 一次提交。
+     *
+     * <p>26.3 的 GUI 是提取式渲染：每个元素只描述顶点，由 GuiRenderer 统一合批。把上百个
+     * 方块塞进同一份状态、走同一条 {@code RenderPipelines.GUI}，整批只占一次 draw，而不是
+     * 每个 {@code fill} 各提交一次 —— 这正是这个界面以前掉帧的根子。
+     *
+     * <p>顶点绕向必须是左上 → 左下 → 右下 → 右上（和原版 {@code ColoredRectangleRenderState}
+     * 一致）：GUI 管线默认开背面剔除，绕反了整批四边形会被剔掉，表现就是线/块全看不见。
+     */
+    private static final class QuadBatch implements GuiElementRenderState {
+        private final Matrix3x2f pose;
+        @Nullable
+        private final ScreenRectangle scissor;
+        private final List<Vertex> vertices = new ArrayList<>();
+        private float minX = Float.MAX_VALUE;
+        private float minY = Float.MAX_VALUE;
+        private float maxX = -Float.MAX_VALUE;
+        private float maxY = -Float.MAX_VALUE;
+
+        QuadBatch(GuiGraphicsExtractor graphics) {
+            this.pose = new Matrix3x2f(graphics.pose());
+            this.scissor = graphics.peekScissorStack();
+        }
+
+        void vertex(float x, float y, int color) {
+            this.vertices.add(new Vertex(x, y, color));
+            this.minX = Math.min(this.minX, x);
+            this.minY = Math.min(this.minY, y);
+            this.maxX = Math.max(this.maxX, x);
+            this.maxY = Math.max(this.maxY, y);
+        }
+
+        @Override
+        public void buildVertices(VertexConsumer consumer) {
+            for (Vertex v : this.vertices) {
+                consumer.addVertexWith2DPose(this.pose, v.x(), v.y()).setColor(v.color());
+            }
+        }
+
+        @Override
+        public RenderPipeline pipeline() {
+            return RenderPipelines.GUI;
+        }
+
+        @Override
+        public TextureSetup textureSetup() {
+            return TextureSetup.noTexture();
+        }
+
+        @Override
+        @Nullable
+        public ScreenRectangle scissorArea() {
+            return this.scissor;
+        }
+
+        @Override
+        @Nullable
+        public ScreenRectangle bounds() {
+            if (this.vertices.isEmpty()) {
+                return null;
+            }
+            int x = (int) Math.floor(this.minX);
+            int y = (int) Math.floor(this.minY);
+            int w = (int) Math.ceil(this.maxX) - x + 1;
+            int h = (int) Math.ceil(this.maxY) - y + 1;
+            ScreenRectangle bounds = new ScreenRectangle(x, y, w, h).transformMaxBounds(this.pose);
+            return this.scissor != null ? this.scissor.intersection(bounds) : bounds;
+        }
+
+        private record Vertex(float x, float y, int color) {
+        }
     }
 }

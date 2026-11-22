@@ -1,15 +1,13 @@
 package dev.descrycraft.descrycraft.client;
 
-import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.math.Axis;
 import dev.descrycraft.descrycraft.config.DescrycraftConfig;
 import dev.descrycraft.descrycraft.entity.ReconDroneEntity;
 import dev.descrycraft.descrycraft.network.DroneScanPayload;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.PlayerFaceRenderer;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.PlayerFaceExtractor;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.world.entity.player.PlayerSkin;
 import net.minecraft.core.BlockPos;
@@ -18,7 +16,8 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
-import org.joml.Vector3f;
+import org.joml.Matrix3x2fStack;
+import org.joml.Vector3fc;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -150,7 +149,7 @@ public final class DroneMarkerOverlay {
 
     // ------------------------------------------------------------------ 渲染
 
-    public static void render(GuiGraphics graphics) {
+    public static void render(GuiGraphicsExtractor graphics) {
         // 操控中要额外画本体标记，所以"什么都没收到"不再是提前退出的充分条件。
         boolean pilot = DroneController.isLinked();
         if (chests.isEmpty() && targets.isEmpty()
@@ -159,18 +158,18 @@ public final class DroneMarkerOverlay {
             return;
         }
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || minecraft.options.hideGui || minecraft.player == null) {
+        if (minecraft.level == null || minecraft.gui.hud.isHidden() || minecraft.player == null) {
             return;
         }
         // 打开背包或任何界面时不画。这些标记属于"看世界"的那一层，压在容器界面上只会碍事。
-        if (minecraft.screen != null) {
+        if (minecraft.gui.screen() != null) {
             return;
         }
         // 引爆后的满屏雪花会把一切都盖住，标记画在上面只会显得脏。那段窗口里让位。
         if (DroneController.isLinked() && isStaticScreenUp(minecraft)) {
             return;
         }
-        Camera camera = minecraft.gameRenderer.getMainCamera();
+        Camera camera = minecraft.gameRenderer.mainCamera();
         if (!camera.isInitialized()) {
             return;
         }
@@ -200,7 +199,7 @@ public final class DroneMarkerOverlay {
      * <p>只在<b>未连线</b>时画。连线时座舱有自己的仪表盘与底部按键条，位置正好撞上，
      * 而且那时候玩家看得见无人机自己的视野，不需要这层转述。
      */
-    private static void drawStatus(GuiGraphics graphics, Font font, int height) {
+    private static void drawStatus(GuiGraphicsExtractor graphics, Font font, int height) {
         if (DroneController.isLinked()) {
             return;
         }
@@ -223,7 +222,7 @@ public final class DroneMarkerOverlay {
         int x = 12;
         int y = height - 26;
         graphics.fill(x - 4, y - 4, x + textWidth + 6, y + 11, MARKER_HALO);
-        graphics.drawString(font, text, x, y, MARKER_TEXT, false);
+        graphics.text(font, text, x, y, MARKER_TEXT, false);
     }
 
     private static boolean isStaticScreenUp(Minecraft minecraft) {
@@ -233,7 +232,7 @@ public final class DroneMarkerOverlay {
 
     // ------------------------------------------------------------------ 箱子标记
 
-    private static void drawChests(GuiGraphics graphics, Minecraft minecraft, Camera camera,
+    private static void drawChests(GuiGraphicsExtractor graphics, Minecraft minecraft, Camera camera,
                                    int width, int height) {
         if (chests.isEmpty()) {
             return;
@@ -242,10 +241,10 @@ public final class DroneMarkerOverlay {
         double fov = fovDegrees > 1.0D ? fovDegrees : minecraft.options.fov().get();
         double focal = (height * 0.5D) / Math.tan(Math.toRadians(fov) * 0.5D);
 
-        Vec3 eye = camera.getPosition();
-        Vector3f forward = camera.getLookVector();
-        Vector3f up = camera.getUpVector();
-        Vector3f left = camera.getLeftVector();
+        Vec3 eye = camera.position();
+        Vector3fc forward = camera.forwardVector();
+        Vector3fc up = camera.upVector();
+        Vector3fc left = camera.leftVector();
 
         int drawn = 0;
         for (BlockPos pos : chests) {
@@ -293,7 +292,7 @@ public final class DroneMarkerOverlay {
      * <p>方块先铺一层深色底再压一层亮色，做出 1 像素描边 —— {@code GuiGraphics} 只能填矩形，
      * 没有描边这个概念，叠两层是最省事的等效做法，面罩里的准星也是这么干的。
      */
-    private static void drawChestLabel(GuiGraphics graphics, Font font, int x, int y, double distance) {
+    private static void drawChestLabel(GuiGraphicsExtractor graphics, Font font, int x, int y, double distance) {
         graphics.fill(x - 6, y - 6, x + 6, y + 6, MARKER_HALO);
         graphics.fill(x - 5, y - 5, x + 5, y + 5, MARKER_EDGE);
         graphics.fill(x - 4, y - 4, x + 4, y + 4, MARKER_FILL);
@@ -306,7 +305,7 @@ public final class DroneMarkerOverlay {
         int textX = x - textWidth / 2;
         int textY = y + 8;
         graphics.fill(textX - 2, textY - 1, textX + textWidth + 2, textY + 9, MARKER_HALO);
-        graphics.drawString(font, text, textX, textY, MARKER_TEXT, false);
+        graphics.text(font, text, textX, textY, MARKER_TEXT, false);
     }
 
     /**
@@ -317,7 +316,7 @@ public final class DroneMarkerOverlay {
      *
      * <p>配色由调用方给：箱子是琥珀，本体是白。三种标记共用同一套几何，换的只是两个色值。
      */
-    private static void drawEdgeIndicator(GuiGraphics graphics, int width, int height,
+    private static void drawEdgeIndicator(GuiGraphicsExtractor graphics, int width, int height,
                                           double dx, double dy, int edge, int fill) {
         double cx = width * 0.5D;
         double cy = height * 0.5D;
@@ -357,7 +356,7 @@ public final class DroneMarkerOverlay {
      * <p>位置是<b>纯客户端</b>算的：服务端只发实体 id，投影用的是相机自己的基向量，
      * 和本体标记、箱子标记同一套。所以标记贴着人走，不会跟着 200 毫秒一包的节奏跳。
      */
-    private static void drawTargets(GuiGraphics graphics, Minecraft minecraft, Camera camera,
+    private static void drawTargets(GuiGraphicsExtractor graphics, Minecraft minecraft, Camera camera,
                                     int width, int height) {
         if (targets.isEmpty()) {
             return;
@@ -365,10 +364,10 @@ public final class DroneMarkerOverlay {
         double fov = fovDegrees > 1.0D ? fovDegrees : minecraft.options.fov().get();
         double focal = (height * 0.5D) / Math.tan(Math.toRadians(fov) * 0.5D);
 
-        Vec3 eye = camera.getPosition();
-        Vector3f forward = camera.getLookVector();
-        Vector3f up = camera.getUpVector();
-        Vector3f left = camera.getLeftVector();
+        Vec3 eye = camera.position();
+        Vector3fc forward = camera.forwardVector();
+        Vector3fc up = camera.upVector();
+        Vector3fc left = camera.leftVector();
 
         // 用挂钟而不是刻：转一圈两秒半，按刻算一帧一帧都是整数度，转起来是跳的。
         double spin = (System.currentTimeMillis() % TARGET_SPIN_MS)
@@ -418,14 +417,14 @@ public final class DroneMarkerOverlay {
      * <p>先画一个粗一圈的深色方框当描边，再压上白色的那一圈。白线压在雪地、水面或天空上会
      * 糊掉，{@code GuiGraphics} 又没有描边这个概念，叠两层是最省事的等效做法。
      */
-    private static void drawTargetSquare(GuiGraphics graphics, int x, int y, double angle) {
-        PoseStack pose = graphics.pose();
-        pose.pushPose();
-        pose.translate(x, y, 0.0F);
-        pose.mulPose(Axis.ZP.rotationDegrees((float) angle));
+    private static void drawTargetSquare(GuiGraphicsExtractor graphics, int x, int y, double angle) {
+        Matrix3x2fStack pose = graphics.pose();
+        pose.pushMatrix();
+        pose.translate(x, y);
+        pose.rotate((float) Math.toRadians(angle));
         square(graphics, TARGET_RADIUS + 1, 2, TARGET_HALO);
         square(graphics, TARGET_RADIUS, 1, TARGET_EDGE);
-        pose.popPose();
+        pose.popMatrix();
     }
 
     /**
@@ -434,7 +433,7 @@ public final class DroneMarkerOverlay {
      * <p>{@code half} 是外沿到中心的距离，{@code thickness} 是边的粗细。上下两条横边各画满，
      * 左右两条竖边在横边之间收住 —— 不收的话四个角会叠出更亮的一块。
      */
-    private static void square(GuiGraphics graphics, int half, int thickness, int colour) {
+    private static void square(GuiGraphicsExtractor graphics, int half, int thickness, int colour) {
         int lo = -half;
         int hi = half + 1;
         graphics.fill(lo, lo, hi, lo + thickness, colour);
@@ -464,7 +463,7 @@ public final class DroneMarkerOverlay {
      * 标记就跑到假人头上去了，玩家反而找不到自己的身体。驾驶员的实体 id 是同步数据
      * （{@link ReconDroneEntity#getPilotId()}），客户端查得到，所以直接用它。
      */
-    private static void drawPilotMarker(GuiGraphics graphics, Minecraft minecraft, Camera camera,
+    private static void drawPilotMarker(GuiGraphicsExtractor graphics, Minecraft minecraft, Camera camera,
                                         int width, int height) {
         Entity body = pilotBody(minecraft);
         if (body == null) {
@@ -474,10 +473,10 @@ public final class DroneMarkerOverlay {
         double fov = fovDegrees > 1.0D ? fovDegrees : minecraft.options.fov().get();
         double focal = (height * 0.5D) / Math.tan(Math.toRadians(fov) * 0.5D);
 
-        Vec3 eye = camera.getPosition();
-        Vector3f forward = camera.getLookVector();
-        Vector3f up = camera.getUpVector();
-        Vector3f left = camera.getLeftVector();
+        Vec3 eye = camera.position();
+        Vector3fc forward = camera.forwardVector();
+        Vector3fc up = camera.upVector();
+        Vector3fc left = camera.leftVector();
 
         double rx = target.x - eye.x;
         double ry = target.y - eye.y;
@@ -520,14 +519,14 @@ public final class DroneMarkerOverlay {
         graphics.fill(headLeft - 1, headTop - 1, headLeft, headTop + size + 1, PILOT_EDGE);
         graphics.fill(headLeft + size, headTop - 1, headLeft + size + 1, headTop + size + 1, PILOT_EDGE);
 
-        PlayerFaceRenderer.draw(graphics, skinOf(body, minecraft), headLeft, headTop, size);
+        PlayerFaceExtractor.extractRenderState(graphics, skinOf(body, minecraft), headLeft, headTop, size);
 
         String text = Component.translatable("hud.descrycraft.pilot").getString();
         int textWidth = minecraft.font.width(text);
         int textX = x - textWidth / 2;
         int textY = headTop + size + 4;
         graphics.fill(textX - 2, textY - 1, textX + textWidth + 2, textY + 9, PILOT_HALO);
-        graphics.drawString(minecraft.font, text, textX, textY, PILOT_TEXT, false);
+        graphics.text(minecraft.font, text, textX, textY, PILOT_TEXT, false);
     }
 
     /**
@@ -578,7 +577,7 @@ public final class DroneMarkerOverlay {
      * <p>渐晕用嵌套的 1 像素环叠出来，和 {@link DroneHud#drawVignette} 同一个手法：
      * {@code GuiGraphics} 没有渐变，只能靠一层层递减的实心矩形骗过眼睛。
      */
-    private static void drawAlert(GuiGraphics graphics, Camera camera, Vec3 origin,
+    private static void drawAlert(GuiGraphicsExtractor graphics, Camera camera, Vec3 origin,
                                   int width, int height) {
         if (!alertShowBorder) {
             return;
@@ -651,8 +650,8 @@ public final class DroneMarkerOverlay {
     private static int threatEdge(Camera camera, Vec3 origin, BlockPos pos) {
         double rx = pos.getX() + 0.5D - origin.x;
         double rz = pos.getZ() + 0.5D - origin.z;
-        Vector3f forward = camera.getLookVector();
-        Vector3f left = camera.getLeftVector();
+        Vector3fc forward = camera.forwardVector();
+        Vector3fc left = camera.leftVector();
 
         double front = rx * forward.x() + rz * forward.z();
         double side = rx * left.x() + rz * left.z();

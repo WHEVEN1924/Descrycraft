@@ -3,17 +3,17 @@ package dev.descrycraft.descrycraft.client;
 import com.google.common.collect.ImmutableMap;
 import com.mojang.math.Axis;
 import dev.descrycraft.descrycraft.entity.ReconDroneEntity;
+import java.util.Map;
 import net.minecraft.util.Mth;
-import net.neoforged.neoforge.client.model.renderable.CompositeRenderable;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 
 /**
  * Builds the per-frame part transforms for the OBJ drone.
  *
- * <p>{@link CompositeRenderable} carries a lightweight skeleton: each named component can be
- * handed a matrix, and children multiply inside their parent. Our OBJ has every group at the top
- * level, so a flat map keyed by group name is all the rig needs.
+ * <p>26.3 起烘焙结果是按组名拆开的 {@code QuadCollection}，所以这里直接产出一张
+ * 「组名 → 变换矩阵」的表，绘制时由 {@link DroneRenderer} 逐组套上。我们的 OBJ 每个组都在顶层，
+ * 一张按组名索引的平表就够用。
  *
  * <p>Pivots are copied from the manifest {@code tools/prepare_drone_model.py} emits, and are
  * expressed in the same space as the mesh: one unit per block, Y up, nose towards -Z, origin at
@@ -67,7 +67,7 @@ public final class DroneRig {
 
     private DroneRig() {}
 
-    public static CompositeRenderable.Transforms of(ReconDroneEntity entity, float partialTick) {
+    public static Map<String, Matrix4f> of(ReconDroneEntity entity, float partialTick) {
         ImmutableMap.Builder<String, Matrix4f> parts = ImmutableMap.builder();
 
         float spin = (entity.tickCount + partialTick) * SPIN_RATE;
@@ -87,7 +87,7 @@ public final class DroneRig {
         float tilt = Mth.clamp(pitch, -GIMBAL_LIMIT, GIMBAL_LIMIT);
         parts.put(GIMBAL, about(GIMBAL_PIVOT, Axis.XP.rotationDegrees(tilt)));
 
-        return CompositeRenderable.Transforms.of(parts.build());
+        return parts.build();
     }
 
     /** A rotation about `pivot`, expressed in model space. */

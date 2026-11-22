@@ -28,12 +28,11 @@ public class ModuleWorkbenchBlock extends Block {
     @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos,
                                                Player player, BlockHitResult hitResult) {
-        if (level.isClientSide) {
-            return InteractionResult.SUCCESS;
+        if (!level.isClientSide()) {
+            player.openMenu(new SimpleMenuProvider(
+                    (id, inventory, owner) -> new ModuleWorkbenchMenu(id, inventory),
+                    Component.translatable("container.descrycraft.module_workbench")));
         }
-        player.openMenu(new SimpleMenuProvider(
-                (id, inventory, owner) -> new ModuleWorkbenchMenu(id, inventory),
-                Component.translatable("container.descrycraft.module_workbench")));
-        return InteractionResult.CONSUME;
+        return InteractionResult.SUCCESS;
     }
 }

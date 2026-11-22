@@ -1,13 +1,14 @@
 package dev.descrycraft.descrycraft.client;
 
 import dev.descrycraft.descrycraft.config.DescrycraftConfig;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
@@ -273,8 +274,8 @@ public final class DescrycraftConfigScreen extends Screen {
      * {@code labels} 记标签。{@code labelKey} 传 null 表示这行不画标签（色块那行就不需要）。
      *
      * <p>用的是 {@code addWidget} 而不是 {@code addRenderableWidget}：前者只进 children 与
-     * narratables，不进 renderables，于是条目不会被 {@code super.render} 顺手画一遍 ——
-     * 它们由 {@link #render} 自己在裁剪区里画，见那里的注释。
+     * narratables，不进 renderables，于是条目不会被 {@code super.extractRenderState} 顺手画一遍 ——
+     * 它们由 {@link #extractRenderState} 自己在裁剪区里画，见那里的注释。
      */
     private void addRow(AbstractWidget widget, int baseY, String labelKey) {
         addWidget(widget);
@@ -468,31 +469,31 @@ public final class DescrycraftConfigScreen extends Screen {
             DescrycraftConfig.CLIENT_SPEC.save();
         }
         if (minecraft != null) {
-            minecraft.setScreen(parent);
+            minecraft.gui.setScreen(parent);
         }
     }
 
     // ------------------------------------------------------------------ 绘制
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         // super 铺背景，并把侧栏与页脚画掉 —— 它们不参与滚动，不进裁剪区。
-        super.render(graphics, mouseX, mouseY, partialTick);
+        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
 
         // 条目单独走一遍，夹在可视区里。窗口矮的时候滚出视野的行会盖到页脚按钮上，而裁剪是
-        // 唯一能一并管住绘制与悬停的办法：AbstractWidget#render 里的 isHovered 会查
+        // 唯一能一并管住绘制与悬停的办法：AbstractWidget#extractRenderState 里的 isHovered 会查
         // containsPointInScissor，所以夹住之后，看不见的行连悬停高亮都不会有。
         graphics.enableScissor(0, topY() - ROW_GAP / 2, width, footerY() - ROW_GAP / 2);
         for (AbstractWidget widget : pageWidgets) {
-            widget.render(graphics, mouseX, mouseY, partialTick);
+            widget.extractRenderState(graphics, mouseX, mouseY, partialTick);
         }
         for (Label label : labels) {
             int y = topY() + label.baseY() + scrollOffset + (label.height() - 8) / 2;
-            graphics.drawString(font, Component.translatable(label.key()), contentX(), y, 0xFFBFD6DD, false);
+            graphics.text(font, Component.translatable(label.key()), contentX(), y, 0xFFBFD6DD, false);
         }
         graphics.disableScissor();
 
-        graphics.drawCenteredString(font, title, width / 2, 11, 0xFFFFFFFF);
+        graphics.centeredText(font, title, width / 2, 11, 0xFFFFFFFF);
         graphics.fill(MARGIN + SIDEBAR_WIDTH + 5, HEADER_HEIGHT, MARGIN + SIDEBAR_WIDTH + 6,
                 height - FOOTER_HEIGHT, 0x40FFFFFF);
     }
@@ -584,12 +585,12 @@ public final class DescrycraftConfigScreen extends Screen {
         }
 
         @Override
-        public void onClick(double mouseX, double mouseY) {
+        public void onClick(MouseButtonEvent event, boolean doubleClick) {
             pick.accept(rgb);
         }
 
         @Override
-        protected void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        protected void extractContents(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
             int x = getX();
             int y = getY();
             int border = isHoveredOrFocused() ? 0xFFFFFFFF : 0x50FFFFFF;

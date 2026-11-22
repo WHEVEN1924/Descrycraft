@@ -3,8 +3,8 @@ package dev.descrycraft.descrycraft.client;
 import dev.descrycraft.descrycraft.network.DroneAlertPayload;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.PlayerFaceRenderer;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.PlayerFaceExtractor;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.resources.DefaultPlayerSkin;
 import net.minecraft.world.entity.player.PlayerSkin;
@@ -57,17 +57,17 @@ public final class DroneDetectWarning {
         expiry = 0L;
     }
 
-    public static void render(GuiGraphics graphics) {
+    public static void render(GuiGraphicsExtractor graphics) {
         long now = System.currentTimeMillis();
         if (pilotId.isEmpty() || now >= expiry) {
             return;
         }
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || minecraft.options.hideGui || minecraft.player == null) {
+        if (minecraft.level == null || minecraft.gui.hud.isHidden() || minecraft.player == null) {
             return;
         }
         // 开着界面时不画：这条横幅属于"看世界"的那一层，压在背包上只会碍事。
-        if (minecraft.screen != null) {
+        if (minecraft.gui.screen() != null) {
             return;
         }
 
@@ -96,8 +96,8 @@ public final class DroneDetectWarning {
         graphics.fill(x, y + panelHeight - 1, x + panelWidth, y + panelHeight,
                 (edgeAlpha << 24) | EDGE_RGB);
 
-        PlayerFaceRenderer.draw(graphics, skinOf(minecraft), x + padding, y + 4, headSize);
-        graphics.drawString(font, text, x + padding + headSize + gap,
+        PlayerFaceExtractor.extractRenderState(graphics, skinOf(minecraft), x + padding, y + 4, headSize);
+        graphics.text(font, text, x + padding + headSize + gap,
                 y + (panelHeight - 8) / 2, (edgeAlpha << 24) | TEXT_RGB, false);
     }
 
