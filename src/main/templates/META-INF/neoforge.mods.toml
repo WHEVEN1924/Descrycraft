@@ -6,7 +6,7 @@ license="${mod_license}"
 modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
-authors="Dr0wse486"
+authors="Dr0wse486, WHEVEN1924"
 description='''
 Adds a scout drone you can deploy, pilot remotely and throw to mark creatures.
 Right click to deploy, press V to link in / out, press G to throw one, R to recall.
