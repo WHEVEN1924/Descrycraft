@@ -9,7 +9,7 @@ src/main/resources/assets/descrycraft/textures/entity/recon_drone_glow_red.png
 src/main/resources/assets/descrycraft/textures/item/recon_drone.png        32x32  drone icon
 src/main/resources/assets/descrycraft/textures/item/drone_chassis.png      16x16  chassis icon
 src/main/resources/assets/descrycraft/textures/item/drone_propeller.png    16x16  propeller icon
-src/main/resources/descrycraft.png                                        128x128 mod logo
+src/main/resources/descrycraft.png                                        512x512 official mod icon/cover
 
 All three entity sheets are painted straight from `tools/drone_manifest.json`,
 which `generate_drone_mesh.py` writes alongside the OBJ. The manifest already
@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import struct
 import sys
 import zlib
@@ -783,26 +784,6 @@ def build_workbench_gui() -> Canvas:
     return canvas
 
 
-# --------------------------------------------------------------------------- logo
-def build_logo() -> Canvas:
-    canvas = Canvas(128, 128)
-
-    canvas.fill(0, 0, 128, 128, (16, 20, 26, 255))
-
-    for i in range(0, 128, 8):
-        canvas.fill(0, i, 128, 1, (22, 28, 36, 255))
-
-    icon = build_item_icon()
-    for y in range(32):
-        for x in range(32):
-            canvas.fill(32 + x * 2, 32 + y * 2, 2, 2, icon.px[y][x])
-
-    canvas.outline(8, 8, 112, 112, CYAN_DEEP)
-    for cx, cy in ((8, 8), (119, 8), (8, 119), (119, 119)):
-        canvas.fill(cx - 2, cy - 2, 6, 6, CYAN)
-    return canvas
-
-
 def build_follow_module_icon() -> Canvas:
     """Follow package: a dotted trail climbing the board, with a solid follower at its head.
 
@@ -856,8 +837,11 @@ def main() -> None:
     write(build_workbench_block(), "textures", "block", "module_workbench.png")
     write(build_workbench_gui(), "textures", "gui", "module_workbench.png")
 
-    # The pack logo sits at the resource root, not under assets/.
-    build_logo().write_png(os.path.join(RES, "descrycraft.png"))
+    # The pack icon sits at the resource root, not under assets/.
+    shutil.copyfile(
+        os.path.join(ROOT, "docs", "icon-512.png"),
+        os.path.join(RES, "descrycraft.png"),
+    )
 
 
 if __name__ == "__main__":
